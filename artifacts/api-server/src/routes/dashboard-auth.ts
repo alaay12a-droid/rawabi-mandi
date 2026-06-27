@@ -5,6 +5,13 @@ import { db } from "@workspace/db";
 import { dashboardUsersTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { sendPinOtpEmail } from "../lib/sendEmail";
+
+const otpStore = new Map<string, { code: string; expiry: number }>();
+
+function generateOtp(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 const router = Router();
 
@@ -92,6 +99,54 @@ router.get("/dashboard/auth/me", async (req, res) => {
 
 router.post("/dashboard/auth/logout", (req, res) => {
   res.clearCookie(COOKIE_NAME);
+  res.json({ ok: true });
+});
+
+router.post("/dashboard/auth/forgot-password", async (req, res) => {
+  const code = generateOtp();
+  otpStore.set("admin-reset", { code, expiry: Date.now() + 10 * 60 * 1000 });
+  try {
+    await sendPinOtpEmail(code);
+    res.json({ ok: true });
+  } catch (e) {
+    req.log.error({ err: e }, "Failed to send reset OTP");
+    res.status(500).json({ error: "فشل إرسال البريد الإلكتروني" });
+  }
+});
+
+router.post("/dashboard/auth/reset-password", async (req, res) => {
+  const { code, newPassword } = req.body as { code?: string; newPassword?: string };
+  if (!code || !newPassword) {
+    res.status(400).json({ error: "الرمز وكلمة المرور الجديدة مطلوبان" });
+    return;
+  }
+
+  const entry = otpStore.get("admin-reset");
+  if (!entry || entry.code !== code || Date.now() > entry.expiry) {
+    res.status(400).json({ error: "الرمز غير صحيح أو منتهي الصلاحية" });
+    return;
+  }
+
+  otpStore.delete("admin-reset");
+
+  const [admin] = await db
+    .select({ id: dashboardUsersTable.id })
+    .from(dashboardUsersTable)
+    .where(eq(dashboardUsersTable.role, "admin"))
+    .limit(1);
+
+  if (!admin) {
+    res.status(404).json({ error: "المستخدم غير موجود" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await db
+    .update(dashboardUsersTable)
+    .set({ passwordHash })
+    .where(eq(dashboardUsersTable.id, admin.id));
+
+  req.log.info("Dashboard admin password reset successfully");
   res.json({ ok: true });
 });
 
