@@ -1,0 +1,584 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: dashboard-auth
+    description: Dashboard authentication
+  - name: orders
+    description: Order management
+  - name: revenue
+    description: Revenue and analytics
+  - name: menu
+    description: Menu management
+  - name: drivers
+    description: Driver management
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Dashboard Auth ───────────────────────────────────────────────────
+  /dashboard/auth/login:
+    post:
+      operationId: dashboardLogin
+      tags: [dashboard-auth]
+      summary: Login to dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardCredentials"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardUser"
+        "401":
+          description: Invalid credentials
+
+  /dashboard/auth/me:
+    get:
+      operationId: dashboardMe
+      tags: [dashboard-auth]
+      summary: Get current dashboard user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardUser"
+        "401":
+          description: Not authenticated
+
+  /dashboard/auth/logout:
+    post:
+      operationId: dashboardLogout
+      tags: [dashboard-auth]
+      summary: Logout from dashboard
+      responses:
+        "200":
+          description: Logged out
+
+  # ── Orders ───────────────────────────────────────────────────────────
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: List orders
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, preparing, ready, done, cancelled]
+        - name: phone
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Get order by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /orders/{id}/status:
+    patch:
+      operationId: updateOrderStatus
+      tags: [orders]
+      summary: Update order status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderStatusUpdate"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  # ── Revenue / KPIs ───────────────────────────────────────────────────
+  /revenue:
+    get:
+      operationId: getRevenue
+      tags: [revenue]
+      summary: Get revenue summary (today)
+      responses:
+        "200":
+          description: Revenue data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueData"
+
+  /revenue/live:
+    get:
+      operationId: getLiveRevenue
+      tags: [revenue]
+      summary: Live revenue stats (last hour, last 30 min, today extras)
+      responses:
+        "200":
+          description: Live revenue data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveRevenueData"
+
+  /revenue/range:
+    get:
+      operationId: getRevenueRange
+      tags: [revenue]
+      summary: Get revenue for a date range
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revenue data for range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueData"
+
+  # ── Menu ─────────────────────────────────────────────────────────────
+  /menu:
+    get:
+      operationId: listMenuItems
+      tags: [menu]
+      summary: List all menu items
+      responses:
+        "200":
+          description: Menu items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MenuItem"
+
+  /menu/{itemId}:
+    put:
+      operationId: updateMenuItem
+      tags: [menu]
+      summary: Update menu item
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MenuItemUpdate"
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuItem"
+    delete:
+      operationId: deleteMenuItem
+      tags: [menu]
+      summary: Delete menu item
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
+  # ── Drivers ──────────────────────────────────────────────────────────
+  /drivers:
+    get:
+      operationId: listDrivers
+      tags: [drivers]
+      summary: List all drivers
+      responses:
+        "200":
+          description: Drivers list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Driver"
+
+  /drivers/daily-summaries:
+    get:
+      operationId: getDriverDailySummaries
+      tags: [drivers]
+      summary: Get daily summaries for all drivers
+      responses:
+        "200":
+          description: Daily summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DriverDailySummary"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    # ── Auth ──────────────────────────────────────────────────────────
+    DashboardCredentials:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+
+    DashboardUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, employee]
+      required: [id, username, role]
+
+    # ── Orders ────────────────────────────────────────────────────────
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        price:
+          type: integer
+        quantity:
+          type: integer
+      required: [id, name, price, quantity]
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+        dailyNumber:
+          type: integer
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        customerAddress:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        totalPrice:
+          type: integer
+        deliveryFee:
+          type: integer
+        discountCode:
+          type: string
+          nullable: true
+        discountAmount:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [pending, preparing, ready, done, cancelled]
+        paymentMethod:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - dailyNumber
+        - customerName
+        - customerPhone
+        - customerAddress
+        - items
+        - totalPrice
+        - deliveryFee
+        - status
+        - paymentMethod
+        - createdAt
+
+    OrderStatusUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, preparing, ready, done, cancelled]
+      required: [status]
+
+    # ── Revenue ───────────────────────────────────────────────────────
+    RevenueAggregate:
+      type: object
+      properties:
+        totalRevenue:    { type: number }
+        deliveryRevenue: { type: number }
+        itemsRevenue:    { type: number }
+        orderCount:      { type: integer }
+        taxAmount:       { type: number }
+        netRevenue:      { type: number }
+        cancelledCount:  { type: integer }
+        cancelledValue:  { type: number }
+        pendingCount:    { type: integer }
+        cashCount:       { type: integer }
+        onlineCount:     { type: integer }
+        cashRevenue:     { type: number }
+        onlineRevenue:   { type: number }
+      required: [totalRevenue, deliveryRevenue, itemsRevenue, orderCount, taxAmount,
+                 netRevenue, cancelledCount, cancelledValue, pendingCount,
+                 cashCount, onlineCount, cashRevenue, onlineRevenue]
+
+    DailyBreakdown:
+      type: object
+      properties:
+        date:           { type: string }
+        total:          { type: number }
+        delivery:       { type: number }
+        items:          { type: number }
+        orders:         { type: integer }
+        tax:            { type: number }
+        net:            { type: number }
+        cancelledCount: { type: integer }
+        cancelledValue: { type: number }
+        cashCount:      { type: integer }
+        onlineCount:    { type: integer }
+      required: [date, total, delivery, items, orders, tax, net,
+                 cancelledCount, cancelledValue, cashCount, onlineCount]
+
+    MonthlyBreakdown:
+      type: object
+      properties:
+        month:          { type: string }
+        total:          { type: number }
+        delivery:       { type: number }
+        items:          { type: number }
+        orders:         { type: integer }
+        tax:            { type: number }
+        net:            { type: number }
+        cancelledCount: { type: integer }
+        cancelledValue: { type: number }
+        cashCount:      { type: integer }
+        onlineCount:    { type: integer }
+      required: [month, total, delivery, items, orders, tax, net,
+                 cancelledCount, cancelledValue, cashCount, onlineCount]
+
+    TopItem:
+      type: object
+      properties:
+        id:      { type: string }
+        name:    { type: string }
+        qty:     { type: integer }
+        revenue: { type: number }
+      required: [id, name, qty, revenue]
+
+    LiveRevenueData:
+      type: object
+      properties:
+        lastHour:            { $ref: "#/components/schemas/RevenueAggregate" }
+        last30min:           { $ref: "#/components/schemas/RevenueAggregate" }
+        uniqueCustomerCount: { type: integer }
+        totalItemsSold:      { type: integer }
+        totalDiscounts:      { type: number }
+      required: [lastHour, last30min, uniqueCustomerCount, totalItemsSold, totalDiscounts]
+
+    RevenueData:
+      type: object
+      properties:
+        today:            { $ref: "#/components/schemas/RevenueAggregate" }
+        week:             { $ref: "#/components/schemas/RevenueAggregate" }
+        month:            { $ref: "#/components/schemas/RevenueAggregate" }
+        year:             { $ref: "#/components/schemas/RevenueAggregate" }
+        dailyBreakdown:
+          type: array
+          items: { $ref: "#/components/schemas/DailyBreakdown" }
+        monthlyBreakdown:
+          type: array
+          items: { $ref: "#/components/schemas/MonthlyBreakdown" }
+        topItems:
+          type: array
+          items: { $ref: "#/components/schemas/TopItem" }
+      required: [today, week, month, year, dailyBreakdown, monthlyBreakdown, topItems]
+
+    # ── Menu ──────────────────────────────────────────────────────────
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        itemId:
+          type: string
+        name:
+          type: string
+        nameEn:
+          type: string
+          nullable: true
+        category:
+          type: string
+        price:
+          type: integer
+        available:
+          type: boolean
+        imageKey:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+          nullable: true
+        sortOrder:
+          type: integer
+      required: [id, itemId, name, category, price, available, sortOrder]
+
+    MenuItemUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        nameEn:
+          type: string
+        price:
+          type: integer
+        available:
+          type: boolean
+        stock:
+          type: integer
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        imageKey:
+          type: string
+          nullable: true
+
+    # ── Drivers ───────────────────────────────────────────────────────
+    Driver:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string
+        active:
+          type: boolean
+        photoUrl:
+          type: string
+          nullable: true
+      required: [id, name, phone, active]
+
+    DriverDailySummary:
+      type: object
+      properties:
+        driverId:
+          type: integer
+        name:
+          type: string
+        orderCount:
+          type: integer
+        cashTotal:
+          type: integer
+        electronicTotal:
+          type: integer
+      required: [driverId, name, orderCount, cashTotal, electronicTotal]
