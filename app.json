@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "50585a93-dbc2-4fe0-8d19-e96556e61dcc"
+      }
+    },
+    "android": {
+      "package": "com.rawabi.almendi"
+    }
+  }
+}
