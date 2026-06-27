@@ -1,0 +1,23 @@
+kind = "mobile"
+previewPath = "/"
+title = "روابي المندي"
+version = "1.0.0"
+id = "artifacts/rawabi-menu"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 26249
+
+[services.development]
+run = "pnpm --filter @workspace/rawabi-menu run dev"
+
+[services.env]
+PORT = "26249"
+BASE_PATH = "/"
