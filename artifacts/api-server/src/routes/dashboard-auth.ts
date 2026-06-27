@@ -96,24 +96,30 @@ router.post("/dashboard/auth/logout", (req, res) => {
 });
 
 export async function seedDashboardAdmin(): Promise<void> {
-  const existing = await db
+  const adminUsername = process.env["ADMIN_USERNAME"] ?? "rawabi-almandi";
+  const adminPassword = process.env["ADMIN_PASSWORD"] ?? "Aa@123456";
+  const passwordHash = await bcrypt.hash(adminPassword, 12);
+
+  const [existing] = await db
     .select({ id: dashboardUsersTable.id })
     .from(dashboardUsersTable)
     .where(eq(dashboardUsersTable.role, "admin"))
     .limit(1);
 
-  if (existing.length > 0) {
-    logger.info("Dashboard admin already exists, skipping seed");
-    return;
+  if (existing) {
+    await db
+      .update(dashboardUsersTable)
+      .set({ username: adminUsername, passwordHash })
+      .where(eq(dashboardUsersTable.id, existing.id));
+    logger.info({ username: adminUsername }, "Dashboard admin updated");
+  } else {
+    await db.insert(dashboardUsersTable).values({
+      username: adminUsername,
+      passwordHash,
+      role: "admin",
+    });
+    logger.info({ username: adminUsername }, "Dashboard admin seeded");
   }
-
-  const passwordHash = await bcrypt.hash("Aa@123456", 12);
-  await db.insert(dashboardUsersTable).values({
-    username: "rwabi-almndi",
-    passwordHash,
-    role: "admin",
-  });
-  logger.info("Dashboard admin seeded (username: rwabi-almndi)");
 }
 
 export default router;
