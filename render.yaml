@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: mandi-menu-1
+    runtime: docker
+    region: oregon
+    plan: free
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: PRIVATE_OBJECT_DIR
+        value: skip
+      - key: PUBLIC_OBJECT_SEARCH_PATHS
+        value: skip
+      - key: DATABASE_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
