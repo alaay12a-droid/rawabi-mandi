@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "روابي المندي",
+    "slug": "rawabi-menu",
+    "owner": "021837ala",
+    "version": "1.1.1",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "rawabi-menu",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0A05"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.rwabi.almndi",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لإرسال موقعك للعميل أثناء التوصيل",
+        "NSLocationAlwaysUsageDescription": "نحتاج موقعك في الخلفية لإرسال موقعك للعميل طوال رحلة التوصيل",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "نحتاج موقعك في الخلفية لإرسال موقعك للعميل طوال رحلة التوصيل",
+        "UIBackgroundModes": ["location", "fetch"]
+      }
+    },
+    "android": {
+      "package": "com.rwabi.almndi",
+      "versionCode": 16,
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive_icon.png",
+        "backgroundColor": "#0F0A05"
+      },
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.INTERNET",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "نحتاج موقعك لإرسال موقعك للعميل أثناء التوصيل",
+          "locationAlwaysAndWhenInUsePermission": "نحتاج موقعك في الخلفية لإرسال موقعك للعميل طوال رحلة التوصيل",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification_icon.png",
+          "color": "#E8920C",
+          "defaultChannel": "orders",
+          "sounds": [
+            "./assets/sounds/notification.wav",
+            "./assets/sounds/notification_loop.wav",
+            "./assets/sounds/order_arrived.m4a",
+            "./assets/sounds/new_order.mp3"
+          ]
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "75492716-d1d5-4871-bfd9-18c7ef3982c7"
+      }
+    }
+  }
+}
