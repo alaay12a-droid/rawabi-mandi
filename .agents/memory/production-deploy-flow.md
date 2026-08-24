@@ -30,3 +30,10 @@ The user must click **Approve** to continue. The build won't proceed without it.
 - `GET /api/healthz` 200 + newer routes returning 404 = old deployment
 - Check `fetch_deployment_logs` for last "Server listening" timestamp to estimate how old
 - Compare which routes return 200 vs 404 against git history to narrow down the deployed commit age
+
+## External Render deployment
+When the app is hosted on Render, a successful push to the tracked GitHub branch does not prove that the service deployed. Verify both the GitHub branch commit and the app's `GET /api/version`; if the latter remains old after several minutes, use Render's manual deploy for the service and tracked branch.
+
+**Why:** The Render service can have automatic deploys disabled or a stale service configuration, while the repository branch is already current.
+
+**How to apply:** Confirm the service is `mandi-menu-1`, deploy the latest commit from `main`, then poll `/api/version` and inspect the served dashboard asset for the feature marker.
