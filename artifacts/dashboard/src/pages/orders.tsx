@@ -349,7 +349,6 @@ export default function Orders() {
   const [deliveredSearch, setDeliveredSearch] = useState("");
   const [deliveredFromDate, setDeliveredFromDate] = useState("");
   const [deliveredToDate, setDeliveredToDate] = useState("");
-  const [deliveredFiltersOpen, setDeliveredFiltersOpen] = useState(false);
 
   const [drivers, setDrivers]               = useState<Driver[]>([]);
   const [driversEnabled, setDriversEnabled] = useState(false);
@@ -1085,7 +1084,7 @@ export default function Orders() {
 
     return (
       <div dir="rtl" style={{ padding: "14px 14px 100px" }}>
-        <div style={{ position: "relative", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
           <div>
             <div style={{ color: C.text, fontWeight: 800, fontSize: 16 }}>الفواتير المسلّمة</div>
             <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>الطلبات التي تم تسليمها للعميل</div>
@@ -1115,83 +1114,74 @@ export default function Orders() {
                 <LayoutGrid size={15} />
                 شبكة
               </button>
-              <button
-                type="button"
-                aria-expanded={deliveredFiltersOpen}
-                aria-label="فتح فلاتر الفواتير"
-                onClick={() => setDeliveredFiltersOpen(open => !open)}
-                title="فلاتر الفواتير"
-                style={{ display: "flex", alignItems: "center", gap: 5, border: "none", borderRadius: 7, padding: "7px 9px", background: hasDeliveredFilters ? C.amber + "22" : "transparent", color: hasDeliveredFilters ? C.amber : C.muted, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
-              >
-                <SlidersHorizontal size={15} />
-                فلاتر
-              </button>
             </div>
           </div>
-          {deliveredFiltersOpen && (
-            <div role="dialog" aria-label="فلاتر الفواتير المسلّمة" style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, width: 360, maxWidth: "calc(100vw - 28px)", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, boxShadow: "0 16px 35px rgba(0,0,0,.28)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.sub, fontSize: 12, fontWeight: 700 }}>
-                  <SlidersHorizontal size={15} style={{ color: C.amber }} />
-                  تصفية الفواتير
-                </div>
-                {hasDeliveredFilters && (
-                  <button
-                    type="button"
-                    onClick={clearDeliveredFilters}
-                    style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", color: C.amber, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}
-                  >
-                    <X size={14} />
-                    مسح الفلاتر
-                  </button>
-                )}
-              </div>
-              <label style={{ display: "block", minWidth: 0, marginBottom: 10 }}>
-                <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>بحث برقم الطلب أو اسم العميل</span>
-                <div style={{ position: "relative" }}>
-                  <Search size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
-                  <input
-                    value={deliveredSearch}
-                    onChange={event => setDeliveredSearch(event.target.value)}
-                    placeholder="مثال: 125 أو محمد"
-                    aria-label="بحث برقم الطلب أو اسم العميل"
-                    style={{ ...inputStyle, paddingRight: 36 }}
-                  />
-                </div>
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <label style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>من تاريخ</span>
-                  <div style={{ position: "relative" }}>
-                    <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
-                    <input
-                      type="date"
-                      value={deliveredFromDate}
-                      onChange={event => setDeliveredFromDate(event.target.value)}
-                      aria-label="من تاريخ"
-                      style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
-                    />
-                  </div>
-                </label>
-                <label style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>إلى تاريخ</span>
-                  <div style={{ position: "relative" }}>
-                    <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
-                    <input
-                      type="date"
-                      value={deliveredToDate}
-                      onChange={event => setDeliveredToDate(event.target.value)}
-                      aria-label="إلى تاريخ"
-                      style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
-                    />
-                  </div>
-                </label>
-              </div>
-              <div style={{ color: invalidDateRange ? C.red : C.muted, fontSize: 10.5, marginTop: 8 }}>
-                {invalidDateRange ? "تاريخ البداية يجب أن يكون قبل تاريخ النهاية" : "يمكن تحديد بداية أو نهاية أو نطاق كامل"}
-              </div>
+        </div>
+
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.sub, fontSize: 12, fontWeight: 700 }}>
+              <SlidersHorizontal size={15} style={{ color: C.amber }} />
+              تصفية الفواتير
             </div>
-          )}
+            {hasDeliveredFilters && (
+              <button
+                type="button"
+                onClick={clearDeliveredFilters}
+                style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", color: C.amber, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}
+              >
+                <X size={14} />
+                مسح الفلاتر
+              </button>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>بحث برقم الطلب أو اسم العميل</span>
+              <div style={{ position: "relative" }}>
+                <Search size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  type="text"
+                  value={deliveredSearch}
+                  onChange={event => setDeliveredSearch(event.target.value)}
+                  placeholder="مثال: 125 أو محمد"
+                  aria-label="بحث برقم الطلب أو اسم العميل"
+                  style={{ ...inputStyle, paddingRight: 36 }}
+                />
+              </div>
+            </label>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>تحديد تاريخ</span>
+              <div style={{ position: "relative" }}>
+                <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  type="date"
+                  value={deliveredFromDate}
+                  onChange={event => setDeliveredFromDate(event.target.value)}
+                  onClick={event => event.currentTarget.showPicker?.()}
+                  aria-label="تاريخ محدد أو بداية النطاق"
+                  style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
+                />
+              </div>
+            </label>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>إلى تاريخ (اختياري)</span>
+              <div style={{ position: "relative" }}>
+                <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  type="date"
+                  value={deliveredToDate}
+                  onChange={event => setDeliveredToDate(event.target.value)}
+                  onClick={event => event.currentTarget.showPicker?.()}
+                  aria-label="نهاية نطاق التاريخ"
+                  style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
+                />
+              </div>
+            </label>
+          </div>
+          <div style={{ color: invalidDateRange ? C.red : C.muted, fontSize: 10.5, marginTop: 8 }}>
+            {invalidDateRange ? "تاريخ البداية يجب أن يكون قبل تاريخ النهاية" : "اختر تاريخًا واحدًا للتصفية، أو حدّد تاريخ البداية والنهاية لنطاق كامل"}
+          </div>
         </div>
 
         {loading ? (
