@@ -24,7 +24,7 @@ interface Order {
   discountCode: string | null; discountAmount: number | null; orderType: OrderType;
   status: OrderStatus; paymentMethod: string; notes: string | null; createdAt: string;
 }
-interface Driver { id: number; name: string; phone: string; photoUrl: string | null; active: boolean; }
+interface Driver { id: number; name: string; phone: string; photoUrl: string | null; active: boolean; isOnline: boolean; }
 interface Assignment { driverId: number; driverName: string; status: string; }
 interface ChatMsg { id: number; orderId: number; text: string; fromCashier: boolean; createdAt: string; readAt: string | null; }
 interface ActiveAssignment {
@@ -471,8 +471,11 @@ export default function Orders() {
           : o
       ));
       setAssigningOrder(null);
-    } catch { alert("تعذّر تعيين المندوب"); }
-  }, []);
+    } catch (error) {
+      await fetchDriversData();
+      alert(error instanceof Error ? error.message : "تعذّر تعيين المندوب");
+    }
+  }, [fetchDriversData]);
 
   const unassignDriver = useCallback(async (orderId: number) => {
     try {
@@ -569,6 +572,7 @@ export default function Orders() {
     fetchUnreadCounts();
     pollRef.current = setInterval(() => {
       fetchOrders(true);
+      fetchDriversData();
       fetchAssignments();
       fetchUnreadCounts();
     }, 10000);
@@ -1848,12 +1852,12 @@ export default function Orders() {
               </div>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-              {drivers.length === 0 ? (
+              {drivers.filter(d => d.isOnline).length === 0 ? (
                 <div style={{ textAlign: "center", padding: 32, color: C.muted }}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🛵</div>
-                  <div>لا يوجد مناديب نشطون</div>
+                  <div>لا يوجد مناديب متصلون</div>
                 </div>
-              ) : drivers.map(d => {
+              ) : drivers.filter(d => d.isOnline).map(d => {
                 const activeCount = activeAssignments.filter(a => a.driverId === d.id).length;
                 const isAvailable = activeCount === 0;
                 return (

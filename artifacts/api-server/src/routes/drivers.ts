@@ -443,14 +443,49 @@ router.post("/orders/:id/assign-driver", async (req, res) => {
   const { driverId } = req.body;
   if (!driverId) { res.status(400).json({ error: "اختر مندوباً" }); return; }
   const driverIdInt = parseInt(driverId);
-  const [assignment] = await db
-    .insert(orderDriverAssignmentsTable)
-    .values({ orderId, driverId: driverIdInt, status: "assigned" })
-    .onConflictDoUpdate({
-      target: orderDriverAssignmentsTable.orderId,
-      set: { driverId: driverIdInt, status: "assigned", assignedAt: new Date() },
-    })
-    .returning();
+  if (isNaN(driverIdInt)) { res.status(400).json({ error: "معرّف المندوب غير صحيح" }); return; }
+
+  const result = await db.transaction(async (tx) => {
+    const [driver] = await tx
+      .select({ id: deliveryDriversTable.id })
+      .from(deliveryDriversTable)
+      .where(and(
+        eq(deliveryDriversTable.id, driverIdInt),
+        eq(deliveryDriversTable.active, true),
+        eq(deliveryDriversTable.isOnline, true),
+      ))
+      .limit(1);
+    if (!driver) return { assignment: null, error: "المندوب غير متصل أو غير متاح للتعيين." };
+
+    const [busyAssignment] = await tx
+      .select({ id: orderDriverAssignmentsTable.id })
+      .from(orderDriverAssignmentsTable)
+      .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
+      .where(and(
+        eq(orderDriverAssignmentsTable.driverId, driverIdInt),
+        ne(orderDriverAssignmentsTable.orderId, orderId),
+        inArray(orderDriverAssignmentsTable.status, ["assigned", "picked_up"]),
+        notInArray(ordersTable.status, ["done", "cancelled"]),
+      ))
+      .limit(1);
+    if (busyAssignment) return { assignment: null, error: "المندوب مشغول بطلب آخر حاليًا." };
+
+    const [assignment] = await tx
+      .insert(orderDriverAssignmentsTable)
+      .values({ orderId, driverId: driverIdInt, status: "assigned" })
+      .onConflictDoUpdate({
+        target: orderDriverAssignmentsTable.orderId,
+        set: { driverId: driverIdInt, status: "assigned", assignedAt: new Date() },
+      })
+      .returning();
+    return { assignment, error: null };
+  });
+
+  if (!result.assignment) {
+    res.status(409).json({ error: result.error });
+    return;
+  }
+  const assignment = result.assignment;
   res.json(assignment);
 
   // Everything below runs after the response is already sent.
@@ -574,7 +609,20 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   let assignedDriver: typeof eligible[0] | null = null;
   for (const candidate of eligible) {
     const result = await db.transaction(async (tx) => {
-      // Re-check inside transaction (guards against two simultaneous requests)
+      // Re-check inside transaction so an offline or inactive driver can never
+      // be selected from a stale candidate list.
+      const [stillEligible] = await tx
+        .select({ id: deliveryDriversTable.id })
+        .from(deliveryDriversTable)
+        .where(and(
+          eq(deliveryDriversTable.id, candidate.id),
+          eq(deliveryDriversTable.active, true),
+          eq(deliveryDriversTable.isOnline, true),
+        ))
+        .limit(1);
+      if (!stillEligible) return null;
+
+      // Re-check inside transaction (guards against two simultaneous requests).
       const [conflict] = await tx
         .select({ id: orderDriverAssignmentsTable.id })
         .from(orderDriverAssignmentsTable)

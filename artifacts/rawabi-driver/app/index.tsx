@@ -41,7 +41,8 @@ async function registerDriverPushToken(driverId: number): Promise<void> {
 }
 
 const LOCATION_DISCLOSURE_KEY = "driver_location_disclosure_accepted_v1";
-const DRIVER_ONLINE_KEY = "driver_is_online_v1";
+const DRIVER_ONLINE_KEY_PREFIX = "driver_is_online_v1";
+const driverOnlineKey = (driverId: number) => `${DRIVER_ONLINE_KEY_PREFIX}_${driverId}`;
 
 // ── Fixed theme (replaces useColors) ─────────────────────────────────────────
 const C = {
@@ -129,7 +130,7 @@ const F = {
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface Driver    { id: number; name: string; phone: string; photoUrl: string | null; active: boolean; }
+interface Driver    { id: number; name: string; phone: string; photoUrl: string | null; active: boolean; isOnline: boolean; }
 interface OrderItem { id: string; name: string; price: number; quantity: number; }
 interface Order     { id: number; dailyNumber: number; customerName: string; customerPhone: string; customerAddress: string | null; items: OrderItem[]; totalPrice: number; status: string; notes: string | null; createdAt: string; }
 interface Assignment{ orderId: number; driverId: number; status: string; assignedAt: string; pickedUpAt: string | null; deliveredAt: string | null; }
@@ -236,17 +237,26 @@ function DriverHome({ driver, onLogout }: { driver: Driver; onLogout: () => void
   const isOnlineRef = useRef(false);
   const [togglingOnline, setTogglingOnline] = useState(false);
 
-  // Restore online status from AsyncStorage on mount, then sync with server
+  // The server is the source of truth for availability. This prevents a stale
+  // device cache from making a driver appear assignable after restarting the app.
   useEffect(() => {
-    AsyncStorage.getItem(DRIVER_ONLINE_KEY).then(async (v) => {
-      const savedOnline = v === "true";
-      isOnlineRef.current = savedOnline;
-      setIsOnline(savedOnline);
-      // Sync saved state to server (handles app restart)
+    let cancelled = false;
+    (async () => {
       try {
-        await apiPut(`/drivers/${driver.id}/online-status`, { isOnline: savedOnline });
-      } catch {}
-    }).catch(() => {});
+        const drivers = await apiGet<Driver[]>("/drivers");
+        const currentDriver = drivers.find((candidate) => candidate.id === driver.id);
+        const serverOnline = Boolean(currentDriver?.active && currentDriver.isOnline);
+        if (cancelled) return;
+        isOnlineRef.current = serverOnline;
+        setIsOnline(serverOnline);
+        await AsyncStorage.setItem(driverOnlineKey(driver.id), String(serverOnline)).catch(() => {});
+      } catch {
+        if (cancelled) return;
+        isOnlineRef.current = false;
+        setIsOnline(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [driver.id]);
 
   const handleToggleOnline = useCallback(async () => {
@@ -254,14 +264,17 @@ function DriverHome({ driver, onLogout }: { driver: Driver; onLogout: () => void
     const next = !isOnlineRef.current;
     setTogglingOnline(true);
     try {
-      await apiPut(`/drivers/${driver.id}/online-status`, { isOnline: next });
-      isOnlineRef.current = next;
-      setIsOnline(next);
-      await AsyncStorage.setItem(DRIVER_ONLINE_KEY, String(next));
+      const result = await apiPut<{ id: number; isOnline: boolean }>(
+        `/drivers/${driver.id}/online-status`,
+        { isOnline: next },
+      );
+      isOnlineRef.current = result.isOnline;
+      setIsOnline(result.isOnline);
+      await AsyncStorage.setItem(driverOnlineKey(driver.id), String(result.isOnline)).catch(() => {});
 
       // When going online, send current GPS so auto-assign can find this driver.
       // Fire-and-forget — don't block the toggle if location fails.
-      if (next) {
+      if (result.isOnline) {
         (async () => {
           try {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -279,6 +292,22 @@ function DriverHome({ driver, onLogout }: { driver: Driver; onLogout: () => void
     }
     setTogglingOnline(false);
   }, [driver.id, togglingOnline]);
+
+  const handleLogout = useCallback(async () => {
+    if (togglingOnline) return;
+    setTogglingOnline(true);
+    try {
+      await apiPut(`/drivers/${driver.id}/online-status`, { isOnline: false });
+      isOnlineRef.current = false;
+      setIsOnline(false);
+      await AsyncStorage.removeItem(driverOnlineKey(driver.id));
+      onLogout();
+    } catch {
+      Alert.alert("تعذّر تسجيل الخروج", "تعذّر إيقاف حالة الاتصال. تحقق من الإنترنت ثم حاول مرة أخرى.");
+    } finally {
+      setTogglingOnline(false);
+    }
+  }, [driver.id, onLogout, togglingOnline]);
 
   useEffect(() => {
     registerDriverPushToken(driver.id).catch(() => {});
@@ -640,7 +669,7 @@ function DriverHome({ driver, onLogout }: { driver: Driver; onLogout: () => void
 
             <TouchableOpacity onPress={() => Alert.alert("تسجيل الخروج", "هل تريد الخروج؟", [
               { text: "إلغاء", style: "cancel" },
-              { text: "خروج", style: "destructive", onPress: onLogout },
+              { text: "خروج", style: "destructive", onPress: handleLogout },
             ])}>
               <Feather name="log-out" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>

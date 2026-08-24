@@ -6,7 +6,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null) as { error?: string } | null;
+    throw new Error(errorBody?.error ?? `${res.status} ${res.statusText}`);
+  }
   if (res.status === 204) return undefined as T;
   return res.json();
 }

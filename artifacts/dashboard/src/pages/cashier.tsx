@@ -237,6 +237,7 @@ export default function Cashier() {
     pollRef.current = setInterval(() => {
       fetchOrders(true);
       fetchUnreadCounts();
+      fetchDrivers();
       fetchActiveAssignments();
       if (cashierView === "drivers") fetchDeliveries(drvSelectedDate);
     }, 10000);
@@ -355,7 +356,14 @@ export default function Cashier() {
       setAssigningOrderId(null);
       fetchDeliveries(drvSelectedDate);
       toast({ title: "تم التعيين", description: "تم تعيين المندوب بنجاح" });
-    } catch { toast({ title: "خطأ", description: "فشل التعيين", variant: "destructive" }); }
+    } catch (error) {
+      await fetchDrivers();
+      toast({
+        title: "تعذّر التعيين",
+        description: error instanceof Error ? error.message : "فشل التعيين",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleConfirmDelivery = async (orderId: number) => {
