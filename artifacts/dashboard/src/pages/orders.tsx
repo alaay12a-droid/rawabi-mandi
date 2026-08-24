@@ -8,7 +8,8 @@ import {
   User, Send, CheckCircle, ChevronDown, Search, Check,
   TrendingUp, DollarSign, CreditCard, Banknote, Store,
   AlertTriangle, Wallet, ArrowUpRight, ArrowDownRight,
-  Calendar, ClipboardList, PackageCheck, UserCheck, CircleDot,
+  Calendar, CalendarDays, ClipboardList, PackageCheck, UserCheck, CircleDot,
+  List, LayoutGrid, SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getOrderPriceFactor } from "@/lib/format";
@@ -310,6 +311,10 @@ export default function Orders() {
   const [sortNewest, setSortNewest]       = useState(true);
   const [selectMode, setSelectMode]       = useState(false);
   const [selectedIds, setSelectedIds]     = useState<Set<number>>(new Set());
+  const [deliveredView, setDeliveredView] = useState<"grid" | "list">("grid");
+  const [deliveredSearch, setDeliveredSearch] = useState("");
+  const [deliveredFromDate, setDeliveredFromDate] = useState("");
+  const [deliveredToDate, setDeliveredToDate] = useState("");
 
   const [drivers, setDrivers]               = useState<Driver[]>([]);
   const [driversEnabled, setDriversEnabled] = useState(false);
@@ -992,24 +997,236 @@ export default function Orders() {
   }
 
   function DeliveredView() {
-    const deliveredOrders = orders
-      .filter(o => o.status === "done")
+    const allDeliveredOrders = orders.filter(o => o.status === "done");
+    const normalizedSearch = deliveredSearch.trim().toLocaleLowerCase();
+    const invalidDateRange = Boolean(deliveredFromDate && deliveredToDate && deliveredFromDate > deliveredToDate);
+    const orderDateKey = (createdAt: string) => {
+      const date = new Date(createdAt);
+      if (Number.isNaN(date.getTime())) return "";
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${date.getFullYear()}-${month}-${day}`;
+    };
+    const deliveredOrders = allDeliveredOrders
+      .filter(order => {
+        const orderNumber = String(order.dailyNumber ?? order.id).toLocaleLowerCase();
+        const matchesSearch = !normalizedSearch ||
+          orderNumber.includes(normalizedSearch) ||
+          order.customerName.toLocaleLowerCase().includes(normalizedSearch);
+        const dateKey = orderDateKey(order.createdAt);
+        const matchesDate = invalidDateRange
+          ? false
+          : deliveredFromDate && deliveredToDate
+            ? dateKey >= deliveredFromDate && dateKey <= deliveredToDate
+            : deliveredFromDate || deliveredToDate
+              ? dateKey === (deliveredFromDate || deliveredToDate)
+              : true;
+        return matchesSearch && matchesDate;
+      })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const hasDeliveredFilters = Boolean(deliveredSearch.trim() || deliveredFromDate || deliveredToDate);
+    const inputStyle: React.CSSProperties = {
+      width: "100%", height: 40, boxSizing: "border-box",
+      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10,
+      color: C.text, padding: "0 12px", fontFamily: "inherit", fontSize: 12.5, outline: "none",
+    };
+    const formatOrderDate = (createdAt: string) => {
+      const date = new Date(createdAt);
+      return Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString("ar-SA", { day: "numeric", month: "short", year: "numeric" });
+    };
+    const formatOrderTime = (createdAt: string) => {
+      const date = new Date(createdAt);
+      return Number.isNaN(date.getTime()) ? "--:--" : date.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+    };
+    const clearDeliveredFilters = () => {
+      setDeliveredSearch("");
+      setDeliveredFromDate("");
+      setDeliveredToDate("");
+    };
 
     return (
       <div dir="rtl" style={{ padding: "14px 14px 100px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
           <div>
             <div style={{ color: C.text, fontWeight: 800, fontSize: 16 }}>الفواتير المسلّمة</div>
             <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>الطلبات التي تم تسليمها للعميل</div>
           </div>
-          <Badge color={C.green} soft>{deliveredOrders.length} فاتورة</Badge>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Badge color={C.green} soft>
+              {hasDeliveredFilters ? `${deliveredOrders.length} من ${allDeliveredOrders.length}` : deliveredOrders.length} فاتورة
+            </Badge>
+            <div role="group" aria-label="طريقة عرض الفواتير" style={{ display: "flex", padding: 3, gap: 3, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+              <button
+                type="button"
+                aria-pressed={deliveredView === "list"}
+                onClick={() => setDeliveredView("list")}
+                title="عرض تفصيلي"
+                style={{ display: "flex", alignItems: "center", gap: 5, border: "none", borderRadius: 7, padding: "7px 9px", background: deliveredView === "list" ? C.amber + "22" : "transparent", color: deliveredView === "list" ? C.amber : C.muted, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <List size={15} />
+                تفصيلية
+              </button>
+              <button
+                type="button"
+                aria-pressed={deliveredView === "grid"}
+                onClick={() => setDeliveredView("grid")}
+                title="عرض شبكي"
+                style={{ display: "flex", alignItems: "center", gap: 5, border: "none", borderRadius: 7, padding: "7px 9px", background: deliveredView === "grid" ? C.amber + "22" : "transparent", color: deliveredView === "grid" ? C.amber : C.muted, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}
+              >
+                <LayoutGrid size={15} />
+                شبكة
+              </button>
+            </div>
+          </div>
         </div>
 
-        {deliveredOrders.length === 0 ? (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 12, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, color: C.sub, fontSize: 12, fontWeight: 700 }}>
+              <SlidersHorizontal size={15} style={{ color: C.amber }} />
+              تصفية الفواتير
+            </div>
+            {hasDeliveredFilters && (
+              <button
+                type="button"
+                onClick={clearDeliveredFilters}
+                style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", color: C.amber, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}
+              >
+                <X size={14} />
+                مسح الفلاتر
+              </button>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>بحث برقم الطلب أو اسم العميل</span>
+              <div style={{ position: "relative" }}>
+                <Search size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  value={deliveredSearch}
+                  onChange={event => setDeliveredSearch(event.target.value)}
+                  placeholder="مثال: 125 أو محمد"
+                  aria-label="بحث برقم الطلب أو اسم العميل"
+                  style={{ ...inputStyle, paddingRight: 36 }}
+                />
+              </div>
+            </label>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>تحديد تاريخ</span>
+              <div style={{ position: "relative" }}>
+                <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  type="date"
+                  value={deliveredFromDate}
+                  onChange={event => setDeliveredFromDate(event.target.value)}
+                  aria-label="تاريخ محدد أو بداية النطاق"
+                  style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
+                />
+              </div>
+            </label>
+            <label style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>إلى تاريخ (اختياري)</span>
+              <div style={{ position: "relative" }}>
+                <CalendarDays size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }} />
+                <input
+                  type="date"
+                  value={deliveredToDate}
+                  onChange={event => setDeliveredToDate(event.target.value)}
+                  aria-label="نهاية نطاق التاريخ"
+                  style={{ ...inputStyle, paddingRight: 36, colorScheme: "dark" }}
+                />
+              </div>
+            </label>
+          </div>
+          <div style={{ color: invalidDateRange ? C.red : C.muted, fontSize: 10.5, marginTop: 8 }}>
+            {invalidDateRange ? "تاريخ البداية يجب أن يكون قبل تاريخ النهاية" : "اختر تاريخًا واحدًا للتصفية، أو حدّد تاريخ البداية والنهاية لنطاق كامل"}
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
+            <div style={{ fontSize: 30 }}>⏳</div>
+            <div style={{ fontSize: 13, marginTop: 8 }}>جارٍ تحميل الفواتير...</div>
+          </div>
+        ) : deliveredOrders.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
             <CheckCircle size={40} style={{ opacity: 0.35, display: "block", margin: "0 auto 12px", color: C.green }} />
-            <div style={{ fontSize: 14 }}>لا توجد فواتير مسلّمة</div>
+            <div style={{ fontSize: 14 }}>{hasDeliveredFilters ? "لا توجد فواتير مطابقة للفلاتر" : "لا توجد فواتير مسلّمة"}</div>
+            {hasDeliveredFilters && (
+              <button type="button" onClick={clearDeliveredFilters} style={{ marginTop: 12, background: C.amber + "18", border: `1px solid ${C.amber}44`, color: C.amber, borderRadius: 9, padding: "8px 13px", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                عرض جميع الفواتير
+              </button>
+            )}
+          </div>
+        ) : deliveredView === "list" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            {deliveredOrders.map(order => {
+              const typeMeta = getOrderTypeMeta(order);
+              const TypeIcon = typeMeta.icon;
+              const isGPS = order.customerAddress?.startsWith("https://");
+              return (
+                <div key={order.id} style={{ display: "flex", alignItems: "stretch", gap: 14, flexWrap: "wrap", background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14 }}>
+                  <div style={{ flex: "1 1 130px", minWidth: 125 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, background: typeMeta.color + "20", color: typeMeta.color }}>
+                        <TypeIcon size={14} />
+                      </div>
+                      <div>
+                        <div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>#{order.dailyNumber ?? order.id}</div>
+                        <div style={{ color: typeMeta.color, fontSize: 10.5, fontWeight: 700 }}>{typeMeta.label}</div>
+                      </div>
+                    </div>
+                    <Badge color={C.green} soft><CheckCircle size={11} style={{ marginLeft: 4 }} /> تم التسليم</Badge>
+                  </div>
+
+                  <div style={{ flex: "1.3 1 180px", minWidth: 170 }}>
+                    <div style={{ color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>العميل</div>
+                    <div style={{ color: C.text, fontSize: 13, fontWeight: 800 }}>{order.customerName}</div>
+                    {order.customerPhone && <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4, direction: "ltr", textAlign: "right" }}>{order.customerPhone}</div>}
+                    {order.customerAddress && (
+                      isGPS
+                        ? <a href={order.customerAddress} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: C.green, textDecoration: "none", fontSize: 11, marginTop: 5 }}><MapPin size={12} /> موقع العميل</a>
+                        : <div style={{ color: C.sub, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>{order.customerAddress}</div>
+                    )}
+                  </div>
+
+                  <div style={{ flex: "2 1 240px", minWidth: 220 }}>
+                    <div style={{ color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>تفاصيل الطلب</div>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {order.items.map(item => (
+                        <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, color: C.sub, fontSize: 11.5 }}>
+                          <span style={{ color: C.text }}>{item.name}</span>
+                          <span style={{ color: C.amber, fontWeight: 700, whiteSpace: "nowrap" }}>× {item.quantity}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {order.notes && <div style={{ color: C.muted, fontSize: 10.5, marginTop: 7, lineHeight: 1.5 }}>ملاحظة: {order.notes}</div>}
+                  </div>
+
+                  <div style={{ flex: "1 1 155px", minWidth: 145 }}>
+                    <div style={{ color: C.muted, fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>التاريخ والدفع</div>
+                    <div style={{ color: C.text, fontSize: 12, fontWeight: 700 }}>{formatOrderDate(order.createdAt)}</div>
+                    <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>{formatOrderTime(order.createdAt)}</div>
+                    <div style={{ color: order.paymentMethod === "cash" ? C.green : C.blue, fontSize: 11.5, fontWeight: 700, marginTop: 7 }}>{order.paymentMethod === "cash" ? "💵 نقدي" : "💳 إلكتروني"}</div>
+                    <div style={{ color: C.amber, fontSize: 15, fontWeight: 800, marginTop: 7 }}>{sar(order.totalPrice)}</div>
+                    {order.deliveryFee > 0 && <div style={{ color: C.muted, fontSize: 10.5, marginTop: 2 }}>رسوم التوصيل: {sar(order.deliveryFee)}</div>}
+                    {order.discountCode && <div style={{ color: C.violet, fontSize: 10.5, marginTop: 2 }}>خصم: {order.discountCode}</div>}
+                  </div>
+
+                  <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", marginRight: "auto" }}>
+                    <button
+                      type="button"
+                      onClick={() => printReceipt(order)}
+                      title="طباعة الفاتورة"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: C.surface, border: `1px solid ${C.border}`, color: C.sub, borderRadius: 10, padding: "9px 12px", fontSize: 12, fontFamily: "inherit", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+                    >
+                      <Printer size={15} />
+                      طباعة
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14, alignItems: "start" }}>
