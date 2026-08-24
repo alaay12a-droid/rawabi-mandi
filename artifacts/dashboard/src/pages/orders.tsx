@@ -35,7 +35,7 @@ interface ActiveAssignment {
 }
 interface AllDeliveryRow { orderId: number; dailyNumber: number | null; customerName: string; customerPhone: string; totalPrice: number; paymentMethod: string; driverName: string; deliveredAt: string | null; }
 
-type CashierView = "orders" | "pickup" | "drivers" | "finance";
+type CashierView = "orders" | "pickup" | "drivers" | "finance" | "delivered";
 type FilterKey = OrderStatus | "all";
 
 const C = {
@@ -991,6 +991,35 @@ export default function Orders() {
     );
   }
 
+  function DeliveredView() {
+    const deliveredOrders = orders
+      .filter(o => o.status === "done")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return (
+      <div dir="rtl" style={{ padding: "14px 14px 100px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div>
+            <div style={{ color: C.text, fontWeight: 800, fontSize: 16 }}>الفواتير المسلّمة</div>
+            <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>الطلبات التي تم تسليمها للعميل</div>
+          </div>
+          <Badge color={C.green} soft>{deliveredOrders.length} فاتورة</Badge>
+        </div>
+
+        {deliveredOrders.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
+            <CheckCircle size={40} style={{ opacity: 0.35, display: "block", margin: "0 auto 12px", color: C.green }} />
+            <div style={{ fontSize: 14 }}>لا توجد فواتير مسلّمة</div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14, alignItems: "start" }}>
+            {deliveredOrders.map(order => <OrderCard key={order.id} order={order} />)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function DriversView() {
     const DAY_ABBR = ["ح","ن","ث","ر","خ","ج","س"];
     const today0 = new Date(); today0.setHours(0,0,0,0);
@@ -1353,6 +1382,7 @@ export default function Orders() {
     { key: "pickup"  as CashierView, label: "تسليم الفرع",     icon: <Package size={17}/>,       badge: pickupPending },
     { key: "drivers" as CashierView, label: "المناديب",          icon: <Truck size={17}/>,         badge: activeAssignments.length },
     { key: "finance" as CashierView, label: "المالية",           icon: <TrendingUp size={17}/>,    badge: 0 },
+    { key: "delivered" as CashierView, label: "الفواتير المسلّمة", icon: <CheckCircle size={17}/>, badge: orders.filter(o => o.status === "done").length },
   ];
 
   return (
@@ -1525,9 +1555,10 @@ export default function Orders() {
         </div>
       )}
 
-      {cashierView === "pickup"  && <PickupView />}
+       {cashierView === "pickup"  && <PickupView />}
       {cashierView === "drivers" && <DriversView />}
       {cashierView === "finance" && <FinancialSummary />}
+       {cashierView === "delivered" && <DeliveredView />}
 
       {selectMode && selectedIds.size > 0 && (
         <div style={{ position: "fixed", bottom: 16, left: 16, right: 16, zIndex: 40, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 16px 40px rgba(0,0,0,.5)" }}>
