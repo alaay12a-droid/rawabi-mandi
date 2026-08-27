@@ -923,6 +923,7 @@ export default function MenuScreen() {
       {selectedItem && (
         <ProductDetailSheet
           item={selectedItem}
+          menuItems={allMenuItems}
           visible={!!selectedItem}
           onClose={handleCloseDetail}
         />

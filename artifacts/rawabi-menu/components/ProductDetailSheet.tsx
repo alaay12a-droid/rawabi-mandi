@@ -14,6 +14,7 @@ import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import { useCart, CartCustomization } from "@/context/CartContext";
 import { MenuItem, MenuItemOptionGroup } from "@/constants/menu";
+import { getExplicitChickenSizeOptions } from "@/utils/chickenSizeVariants";
 
 const F = {
   regular: "Cairo_400Regular",
@@ -33,6 +34,7 @@ const ADDON_OPTIONS: { label: string; extra: number }[] = [
 ];
 
 const RICE_CATS = new Set(["chicken", "meat", "mains"]);
+const EMPTY_MENU_ITEMS: (MenuItem & { available?: boolean })[] = [];
 
 export function itemNeedsCustomization(item: MenuItem): boolean {
   if (!RICE_CATS.has(item.category)) return false;
@@ -42,37 +44,14 @@ export function itemNeedsCustomization(item: MenuItem): boolean {
   return true;
 }
 
-interface ChickenSizes {
-  halfPrice: number;
-  wholePrice: number;
-  defaultIdx: number;
-}
-
-function getChickenSizes(item: MenuItem): ChickenSizes | null {
-  // Legacy menus store half/whole as separate products with independently
-  // editable prices. Never derive one product's price from another product.
-  // Multi-size selectors are shown only when explicit DB sizes are configured.
-  return null;
-}
-
-interface MeatSizes {
-  quarterPrice: number;
-  halfPrice: number;
-  wholePrice: number;
-  defaultIdx: number;
-}
-
-function getMeatSizes(item: MenuItem): MeatSizes | null {
-  return null;
-}
-
 interface Props {
   item: (MenuItem & { available?: boolean; nameEn?: string; descriptionEn?: string }) | null;
+  menuItems?: (MenuItem & { available?: boolean })[];
   visible: boolean;
   onClose: () => void;
 }
 
-export function ProductDetailSheet({ item, visible, onClose }: Props) {
+export function ProductDetailSheet({ item, menuItems = EMPTY_MENU_ITEMS, visible, onClose }: Props) {
   const colors = useColors();
   const { addItem } = useCart();
   const insets = useSafeAreaInsets();
@@ -82,9 +61,8 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
   // DB-driven sizes
   const [dbSizeIdx, setDbSizeIdx] = useState(0);
 
-  // Legacy chicken/meat size state
-  const [sizeIdx, setSizeIdx] = useState(0);
-  const [meatSizeIdx, setMeatSizeIdx] = useState(2);
+  // Explicitly linked chicken products stored as separate database rows
+  const [linkedChickenSizeIdx, setLinkedChickenSizeIdx] = useState(0);
 
   const [riceIdx, setRiceIdx] = useState(0);
   const [addonIdx, setAddonIdx] = useState(0);
@@ -99,6 +77,10 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
   // Enabled sizes from DB (prices already in SAR from useMenu hook)
   const enabledDbSizes = item?.sizes?.filter(s => s.enabled) ?? [];
   const hasDbSizes = enabledDbSizes.length > 0;
+  const linkedChickenSizes = !hasDbSizes && item
+    ? getExplicitChickenSizeOptions(item.id, menuItems)
+    : [];
+  const hasLinkedChickenSizes = linkedChickenSizes.length === 2;
 
   // Option groups from DB (choices available)
   const optionGroups: MenuItemOptionGroup[] = (item?.options ?? []).map(g => ({
@@ -119,10 +101,9 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
       setRiceIdx(0);
       setAddonIdx(0);
       setDbSizeIdx(0);
-      const sizes = getChickenSizes(item);
-      setSizeIdx(sizes?.defaultIdx ?? 0);
-      const meatSizes = getMeatSizes(item);
-      setMeatSizeIdx(meatSizes?.defaultIdx ?? 2);
+      const linkedSizes = getExplicitChickenSizeOptions(item.id, menuItems);
+      const currentLinkedIdx = linkedSizes.findIndex((option) => option.item.id === item.id);
+      setLinkedChickenSizeIdx(currentLinkedIdx >= 0 ? currentLinkedIdx : 0);
       // Auto-select first available choice for each required group
       const defaults: Record<string, string> = {};
       for (const g of (item.options ?? [])) {
@@ -138,7 +119,7 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
       const dbAdd = (item.additions ?? []).filter(a => a.available);
       setDbAdditionName(dbAdd.length > 0 ? dbAdd[0].name : "");
     }
-  }, [visible, item?.id]);
+  }, [visible, item?.id, menuItems]);
 
   if (!item) return null;
 
@@ -152,29 +133,13 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
   const selectedAddon = !hasDbAdditions && showCustomization ? ADDON_OPTIONS[addonIdx] : null;
   const selectedDbAddition = hasDbAdditions ? dbAdditions.find(a => a.name === dbAdditionName) ?? dbAdditions[0] : null;
 
-  // Legacy size selectors only shown if no DB sizes defined
-  const sizes = !hasDbSizes ? getChickenSizes(item) : null;
-  const showSizeSelector = sizes !== null;
-
-  const meatSizes = !hasDbSizes ? getMeatSizes(item) : null;
-  const showMeatSizeSelector = meatSizes !== null;
-
-  const meatSizePrices = meatSizes
-    ? [meatSizes.quarterPrice, meatSizes.halfPrice, meatSizes.wholePrice]
-    : [];
-
-  const chickenPrices = sizes
-    ? [sizes.halfPrice, sizes.wholePrice]
-    : [];
-
   const selectedDbSize = hasDbSizes ? (enabledDbSizes[dbSizeIdx] ?? enabledDbSizes[0]) : null;
+  const selectedLinkedChickenSize = hasLinkedChickenSizes
+    ? (linkedChickenSizes[linkedChickenSizeIdx] ?? linkedChickenSizes[0])
+    : null;
   const baseSizePrice = selectedDbSize
     ? selectedDbSize.price
-    : showSizeSelector
-      ? chickenPrices[sizeIdx]
-      : showMeatSizeSelector
-        ? meatSizePrices[meatSizeIdx]
-        : item.price;
+    : selectedLinkedChickenSize?.item.price ?? item.price;
 
   const riceExtra = selectedDbRice?.extraPrice ?? selectedRice?.extra ?? 0;
   const addonExtra = selectedDbAddition?.extraPrice ?? selectedAddon?.extra ?? 0;
@@ -197,16 +162,13 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
 
     let sizeLabel: string | undefined;
     let sizeExtraPrice = 0;
+    const cartItem = selectedLinkedChickenSize?.item ?? item;
 
     if (hasDbSizes) {
       sizeLabel = selectedDbSize?.name;
       sizeExtraPrice = (selectedDbSize?.price ?? item.price) - item.price;
-    } else if (showSizeSelector) {
-      sizeLabel = ["نصف", "حبة كاملة"][sizeIdx];
-      sizeExtraPrice = chickenPrices[sizeIdx] - item.price;
-    } else if (showMeatSizeSelector) {
-      sizeLabel = ["ربع", "نصف", "كامل"][meatSizeIdx];
-      sizeExtraPrice = meatSizePrices[meatSizeIdx] - item.price;
+    } else if (selectedLinkedChickenSize) {
+      sizeLabel = selectedLinkedChickenSize.label;
     }
 
     const totalExtra = sizeExtraPrice + extraPrice;
@@ -218,13 +180,17 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
       : undefined;
 
     const customization: CartCustomization | undefined =
-      (hasDbSizes || showSizeSelector || showMeatSizeSelector || showCustomization || hasOptionGroups || hasDbRiceTypes || hasDbAdditions)
+      (hasDbSizes || hasLinkedChickenSizes || showCustomization || hasOptionGroups || hasDbRiceTypes || hasDbAdditions)
         ? {
             size: sizeLabel,
             riceType: selectedDbRice?.name ?? selectedRice?.label,
             addon: selectedDbAddition?.name ?? selectedAddon?.label,
             extraPrice: totalExtra,
-            variantId: sizeLabel ? `${item.id}:size:${sizeLabel}` : `${item.id}:base`,
+            variantId: selectedLinkedChickenSize
+              ? selectedLinkedChickenSize.item.id
+              : sizeLabel
+                ? `${item.id}:size:${sizeLabel}`
+                : `${item.id}:base`,
             variantName: sizeLabel ?? item.name,
             variantPrice: baseSizePrice,
             unitPrice,
@@ -232,7 +198,7 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
           }
         : undefined;
 
-    addItem(item, qty, customization, unitPrice);
+    addItem(cartItem, qty, customization, unitPrice);
     onClose();
   };
 
@@ -343,20 +309,17 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
               </View>
             )}
 
-            {/* ── Legacy Size Selector (Chicken: نصف / حبة كاملة) ── */}
-            {showSizeSelector && (
+            {/* ── Explicit linked products (Chicken: نصف / حبة كاملة) ── */}
+            {hasLinkedChickenSizes && (
               <View style={{ gap: 10 }}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>الحجم</Text>
                 <View style={{ flexDirection: "row", gap: 10 }}>
-                  {([
-                    { label: "نصف",        icon: "½", price: sizes!.halfPrice  },
-                    { label: "حبة كاملة", icon: "1", price: sizes!.wholePrice },
-                  ] as const).map((opt, i) => {
-                    const active = sizeIdx === i;
+                  {linkedChickenSizes.map((opt, i) => {
+                    const active = linkedChickenSizeIdx === i;
                     return (
                       <TouchableOpacity
                         key={i}
-                        onPress={() => { setSizeIdx(i); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                        onPress={() => { setLinkedChickenSizeIdx(i); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
                         style={[
                           styles.sizeBtn,
                           {
@@ -374,48 +337,7 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
                           {opt.label}
                         </Text>
                         <Text style={{ color: active ? "#ffee99" : colors.gold, fontFamily: F.bold, fontSize: 13 }}>
-                          {priceStr(opt.price)} ر.س
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-
-            {/* ── Legacy Size Selector (Meat: ربع / نصف / كامل) ── */}
-            {showMeatSizeSelector && (
-              <View style={{ gap: 10 }}>
-                <Text style={[styles.sectionTitle, { color: colors.foreground }]}>الحجم</Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  {([
-                    { label: "ربع",   icon: "¼", price: meatSizes!.quarterPrice },
-                    { label: "نصف",   icon: "½", price: meatSizes!.halfPrice    },
-                    { label: "كامل",  icon: "1", price: meatSizes!.wholePrice   },
-                  ] as const).map((opt, i) => {
-                    const active = meatSizeIdx === i;
-                    return (
-                      <TouchableOpacity
-                        key={i}
-                        onPress={() => { setMeatSizeIdx(i); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-                        style={[
-                          styles.sizeBtn,
-                          {
-                            flex: 1,
-                            backgroundColor: active ? "#C8171A" : colors.secondary,
-                            borderColor: active ? "#C8171A" : colors.border,
-                          },
-                        ]}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={{ color: active ? "#fff" : colors.mutedForeground, fontFamily: F.extra, fontSize: 22 }}>
-                          {opt.icon}
-                        </Text>
-                        <Text style={{ color: active ? "#fff" : colors.foreground, fontFamily: active ? F.bold : F.regular, fontSize: 14 }}>
-                          {opt.label}
-                        </Text>
-                        <Text style={{ color: active ? "#ffee99" : colors.gold, fontFamily: F.bold, fontSize: 13 }}>
-                          {priceStr(opt.price)} ر.س
+                          {priceStr(opt.item.price)} ر.س
                         </Text>
                       </TouchableOpacity>
                     );

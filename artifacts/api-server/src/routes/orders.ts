@@ -5,6 +5,7 @@ import { sendPushToCashiers, sendPushToToken, sendPushToDriver } from "../lib/se
 import { sendSms } from "../lib/sendSms.js";
 import { z } from "zod";
 import { processReferralReward } from "./referrals.js";
+import { isValidExplicitChickenSizeSelection } from "../lib/explicitChickenSizes.js";
 
 const router = Router();
 
@@ -24,9 +25,17 @@ function resolveConfiguredUnitPrice(
     if (!size) return Number.NaN;
     priceInHalalas = size.price;
   } else if (customization?.size) {
-    // Old clients could synthesize cross-product sizes. Those prices are
-    // ambiguous once the separate product rows are edited independently.
-    return Number.NaN;
+    // Some chicken sizes are separate product rows. Accept the display label
+    // only when it explicitly identifies this exact row and its configured
+    // base-price snapshot. Never derive a sibling price mathematically.
+    const hasMatchingExplicitRow = isValidExplicitChickenSizeSelection({
+      itemId: menuItem.itemId,
+      priceInHalalas: menuItem.price,
+      size: customization.size,
+      variantId: customization.variantId,
+      variantPrice: customization.variantPrice,
+    });
+    if (!hasMatchingExplicitRow) return Number.NaN;
   }
 
   const availableRiceTypes = menuItem.riceTypes.filter((choice) => choice.available);

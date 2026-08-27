@@ -13,6 +13,7 @@ import { useColors } from "@/hooks/useColors";
 import { useCartActions } from "@/context/CartContext";
 import { MenuItem, FOOD_IMAGES } from "@/constants/menu";
 import { itemNeedsCustomization } from "@/components/ProductDetailSheet";
+import { isExplicitChickenSizeProduct } from "@/utils/chickenSizeVariants";
 
 const F = {
   regular: "Cairo_400Regular",
@@ -50,6 +51,7 @@ function MenuItemCardInner({ item, quantity, onPress, isEn, isFavorite: faved, o
   // Item needs detail sheet if it has configurable sizes or option groups
   const hasOptions =
     itemNeedsCustomization(item) ||
+    isExplicitChickenSizeProduct(item.id) ||
     (item.sizes?.some(size => size.enabled) ?? false) ||
     (item.options?.some(g => g.choices.some(c => c.available)) ?? false) ||
     (item.riceTypes?.some(choice => choice.available) ?? false) ||

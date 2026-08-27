@@ -368,6 +368,7 @@ export default function HomeScreen() {
       {selectedItem && (
         <ProductDetailSheet
           item={selectedItem}
+          menuItems={allItems}
           visible={!!selectedItem}
           onClose={handleCloseDetail}
         />

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { addOrMergeCartLine, createCartKey, getCartUnitPrice } from "../utils/cartPricing.ts";
+import { getExplicitChickenSizeOptions } from "../utils/chickenSizeVariants.ts";
+import { resolveCartItemName, resolveCustomizationParts } from "../utils/cartItemName.ts";
 
 const chicken = { price: 46 };
 const half = {
@@ -63,5 +65,35 @@ const refreshedHalf = addOrMergeCartLine(
 assert.equal(refreshedHalf.length, 1);
 assert.equal(refreshedHalf[0].quantity, 2);
 assert.equal(refreshedHalf[0].unitPrice, 24);
+
+const configuredChickenRows = [
+  { id: "c5", name: "نص حبة على الفحم مع الرز", price: 23, category: "chicken", available: true },
+  { id: "c6", name: "حبة على الفحم مع الرز", price: 46, category: "chicken", available: true },
+];
+const explicitSizes = getExplicitChickenSizeOptions("c6", configuredChickenRows);
+assert.deepEqual(
+  explicitSizes.map((option) => ({
+    label: option.label,
+    icon: option.icon,
+    itemId: option.item.id,
+    price: option.item.price,
+  })),
+  [
+    { label: "نصف", icon: "½", itemId: "c5", price: 23 },
+    { label: "حبة كاملة", icon: "1", itemId: "c6", price: 46 },
+  ],
+  "linked size prices must come from the corresponding configured product rows",
+);
+
+const selectedHalf = {
+  size: "نصف",
+  variantId: "c5",
+  variantName: "نصف",
+  variantPrice: 23,
+  unitPrice: 23,
+};
+const selectedHalfName = resolveCartItemName(configuredChickenRows[0].name, selectedHalf);
+assert.equal(selectedHalfName, "نص حبة على الفحم مع الرز");
+assert.deepEqual(resolveCustomizationParts(selectedHalf, selectedHalfName), []);
 
 console.log("cart pricing regression tests passed");
