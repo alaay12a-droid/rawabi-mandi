@@ -50,7 +50,10 @@ function MenuItemCardInner({ item, quantity, onPress, isEn, isFavorite: faved, o
   // Item needs detail sheet if it has configurable sizes or option groups
   const hasOptions =
     itemNeedsCustomization(item) ||
-    (item.options?.some(g => g.choices.some(c => c.available)) ?? false);
+    (item.sizes?.some(size => size.enabled) ?? false) ||
+    (item.options?.some(g => g.choices.some(c => c.available)) ?? false) ||
+    (item.riceTypes?.some(choice => choice.available) ?? false) ||
+    (item.additions?.some(choice => choice.available) ?? false);
 
   const handleAdd = useCallback(() => {
     if (isUnavailable || atStockLimit) return;

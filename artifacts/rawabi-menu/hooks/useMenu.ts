@@ -149,7 +149,19 @@ function computeHash(items: ApiMenuItem[]): string {
   const sorted = [...items].sort((a, b) => a.itemId.localeCompare(b.itemId));
   let h = 5381;
   for (const it of sorted) {
-    const sig = `${it.itemId}|${it.price}|${it.available ? 1 : 0}|${it.name}|${it.imageUrl ?? ""}|${it.sortOrder}|${it.stock ?? ""}`;
+    const sig = [
+      it.itemId,
+      it.price,
+      it.available ? 1 : 0,
+      it.name,
+      it.imageUrl ?? "",
+      it.sortOrder,
+      it.stock ?? "",
+      JSON.stringify(it.sizes ?? []),
+      JSON.stringify(it.options ?? []),
+      JSON.stringify(it.riceTypes ?? []),
+      JSON.stringify(it.additions ?? []),
+    ].join("|");
     for (let i = 0; i < sig.length; i++) {
       h = (Math.imul(31, h) + sig.charCodeAt(i)) | 0;
     }

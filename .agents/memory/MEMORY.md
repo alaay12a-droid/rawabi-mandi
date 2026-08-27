@@ -18,3 +18,4 @@
 - [Migration ALTER TABLE rule](migration-alter-table-rule.md) — new columns on existing tables MUST have ALTER TABLE ADD COLUMN IF NOT EXISTS in index.ts; CREATE TABLE IF NOT EXISTS is a no-op for existing tables
 - [EAS iOS channel required for OTA](eas-ios-channel-ota.md) — production iOS profile in eas.json MUST have channel:"production" or OTA updates never reach devices; omitting it silently breaks all OTA delivery
 - [Order customization persistence](order-customization-persistence.md) — size/options must remain structured order data; a formatted item name is compatibility display only
+- [Variant pricing authority](variant-pricing-authority.md) — configured sizes use explicit prices; legacy size-specific products never derive prices from editable sibling rows

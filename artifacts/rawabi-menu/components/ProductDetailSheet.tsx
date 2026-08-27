@@ -49,16 +49,10 @@ interface ChickenSizes {
 }
 
 function getChickenSizes(item: MenuItem): ChickenSizes | null {
-  if (item.category !== "chicken") return null;
-  if (item.name.startsWith("رز ")) return null;
-  if (item.description?.includes("بدون رز") && item.name.includes("سادة")) return null;
-
-  const isHalf = item.name.includes("نص") || item.name.includes("نصف");
-
-  if (isHalf) {
-    return { halfPrice: item.price, wholePrice: item.price * 2, defaultIdx: 0 };
-  }
-  return { halfPrice: item.price / 2, wholePrice: item.price, defaultIdx: 1 };
+  // Legacy menus store half/whole as separate products with independently
+  // editable prices. Never derive one product's price from another product.
+  // Multi-size selectors are shown only when explicit DB sizes are configured.
+  return null;
 }
 
 interface MeatSizes {
@@ -69,19 +63,7 @@ interface MeatSizes {
 }
 
 function getMeatSizes(item: MenuItem): MeatSizes | null {
-  if (item.category !== "meat") return null;
-  if (item.name.includes("نفر")) return null;
-
-  const isQuarter = item.name.includes("ربع");
-  const isHalf    = item.name.includes("نص") || item.name.includes("نصف");
-
-  if (isQuarter) {
-    return { quarterPrice: item.price, halfPrice: item.price * 2, wholePrice: item.price * 4, defaultIdx: 0 };
-  }
-  if (isHalf) {
-    return { quarterPrice: item.price / 2, halfPrice: item.price, wholePrice: item.price * 2, defaultIdx: 1 };
-  }
-  return { quarterPrice: item.price / 4, halfPrice: item.price / 2, wholePrice: item.price, defaultIdx: 2 };
+  return null;
 }
 
 interface Props {
@@ -185,8 +167,9 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
     ? [sizes.halfPrice, sizes.wholePrice]
     : [];
 
-  const baseSizePrice = hasDbSizes
-    ? enabledDbSizes[dbSizeIdx].price
+  const selectedDbSize = hasDbSizes ? (enabledDbSizes[dbSizeIdx] ?? enabledDbSizes[0]) : null;
+  const baseSizePrice = selectedDbSize
+    ? selectedDbSize.price
     : showSizeSelector
       ? chickenPrices[sizeIdx]
       : showMeatSizeSelector
@@ -216,8 +199,8 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
     let sizeExtraPrice = 0;
 
     if (hasDbSizes) {
-      sizeLabel = enabledDbSizes[dbSizeIdx].name;
-      sizeExtraPrice = enabledDbSizes[dbSizeIdx].price - item.price;
+      sizeLabel = selectedDbSize?.name;
+      sizeExtraPrice = (selectedDbSize?.price ?? item.price) - item.price;
     } else if (showSizeSelector) {
       sizeLabel = ["نصف", "حبة كاملة"][sizeIdx];
       sizeExtraPrice = chickenPrices[sizeIdx] - item.price;
@@ -241,11 +224,15 @@ export function ProductDetailSheet({ item, visible, onClose }: Props) {
             riceType: selectedDbRice?.name ?? selectedRice?.label,
             addon: selectedDbAddition?.name ?? selectedAddon?.label,
             extraPrice: totalExtra,
+            variantId: sizeLabel ? `${item.id}:size:${sizeLabel}` : `${item.id}:base`,
+            variantName: sizeLabel ?? item.name,
+            variantPrice: baseSizePrice,
+            unitPrice,
             selectedOptions: pickedOptions,
           }
         : undefined;
 
-    addItem(item, qty, customization);
+    addItem(item, qty, customization, unitPrice);
     onClose();
   };
 

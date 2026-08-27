@@ -403,6 +403,14 @@ components:
           type: string
         addon:
           type: string
+        variantId:
+          type: string
+        variantName:
+          type: string
+        variantPrice:
+          type: number
+        unitPrice:
+          type: number
         selectedOptions:
           type: array
           items:
