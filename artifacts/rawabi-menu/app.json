@@ -3,7 +3,7 @@
     "name": "روابي المندي",
     "slug": "rawabi-menu",
     "owner": "021837ala",
-    "version": "1.4.0",
+    "version": "1.3.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rawabi-menu",
@@ -28,7 +28,7 @@
     },
     "android": {
       "package": "com.rwabi.almndi",
-      "versionCode": 32,
+      "versionCode": 33,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive_icon.png",
