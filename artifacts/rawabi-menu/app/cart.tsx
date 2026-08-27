@@ -168,11 +168,11 @@ export default function CartScreen() {
                 const unitStr = unitPrice % 1 === 0 ? unitPrice.toString() : unitPrice.toFixed(1);
                 const baseArabicName = resolveCartItemName(cartItem.item.name, cartItem.customization);
                 const itemName = isEn && cartItem.item.nameEn ? cartItem.item.nameEn : baseArabicName;
-                const customParts = resolveCustomizationParts(cartItem.customization);
+                const customParts = resolveCustomizationParts(cartItem.customization, baseArabicName);
 
                 const cartImg = getItemImage(cartItem.item);
                 return (
-                  <React.Fragment key={cartItem.item.id}>
+                  <React.Fragment key={cartItem.cartKey}>
                     {index > 0 && (
                       <View style={[styles.itemDivider, { backgroundColor: colors.border }]} />
                     )}
@@ -201,7 +201,7 @@ export default function CartScreen() {
 
                       <View style={styles.itemRight}>
                         <TouchableOpacity
-                          onPress={() => removeItem(cartItem.item.id)}
+                          onPress={() => removeItem(cartItem.cartKey)}
                           style={[styles.removeBtn, { backgroundColor: colors.secondary }]}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
@@ -216,7 +216,7 @@ export default function CartScreen() {
                           <TouchableOpacity
                             onPress={() => {
                               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                              updateQuantity(cartItem.item.id, cartItem.quantity + 1);
+                              updateQuantity(cartItem.cartKey, cartItem.quantity + 1);
                             }}
                             style={[styles.qtyBtn, { backgroundColor: colors.gold }]}
                           >
@@ -228,7 +228,7 @@ export default function CartScreen() {
                           <TouchableOpacity
                             onPress={() => {
                               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                              updateQuantity(cartItem.item.id, cartItem.quantity - 1);
+                              updateQuantity(cartItem.cartKey, cartItem.quantity - 1);
                             }}
                             style={[styles.qtyBtn, { backgroundColor: colors.secondary }]}
                           >

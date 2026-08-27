@@ -56,6 +56,12 @@ interface OrderItem {
   name: string;
   price: number;
   quantity: number;
+  customization?: {
+    size?: string;
+    riceType?: string;
+    addon?: string;
+    selectedOptions?: { groupName: string; choice: string }[];
+  };
 }
 
 interface Order {
@@ -73,6 +79,27 @@ interface Order {
   paymentMethod: string;
   notes: string | null;
   createdAt: string;
+}
+
+function getOrderItemDisplayName(item: OrderItem): string {
+  const size = item.customization?.size?.trim();
+  if (!size) return item.name;
+
+  if (size === "نصف") {
+    if (item.name.includes("حبة كاملة")) return item.name.replace("حبة كاملة", "نص حبة");
+    if (/(?:نص حبة|نص دجاجة|نصف دجاجة)/.test(item.name)) return item.name;
+    return `${item.name} - ${item.name.includes("دجاج") ? "نص دجاجة" : "نصف"}`;
+  }
+
+  if (size === "حبة كاملة") {
+    if (item.name.includes("نص حبة")) return item.name.replace("نص حبة", "حبة كاملة");
+    if (item.name.includes("نص دجاجة")) return item.name.replace("نص دجاجة", "حبة كاملة");
+    if (item.name.includes("نصف دجاجة")) return item.name.replace("نصف دجاجة", "حبة كاملة");
+    if (item.name.includes("حبة كاملة")) return item.name;
+    return `${item.name} - حبة كاملة`;
+  }
+
+  return item.name.includes(size) ? item.name : `${item.name} - ${size}`;
 }
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
@@ -619,7 +646,7 @@ export default function CashierScreen() {
       const bg = idx % 2 === 1 ? "background:#fafafa;" : "";
       return `
         <tr style="${bg}">
-          <td style="padding:5px 8px;text-align:right;">${item.name}</td>
+          <td style="padding:5px 8px;text-align:right;">${getOrderItemDisplayName(item)}</td>
           <td style="padding:5px 8px;text-align:center;">${item.quantity}</td>
           <td style="padding:5px 8px;text-align:left;font-weight:600;">${fmt(lineTotal)} ر.س</td>
         </tr>`;
@@ -947,7 +974,7 @@ ${daySections}
       const statusAr = STATUS_LABELS[o.status] ?? o.status;
       const payAr = o.paymentMethod === "cash" ? "نقدي" : "إلكتروني";
       const price = o.status === "cancelled" ? "ملغى" : `${fmt(o.totalPrice / 100)} ر.س`;
-      const items = o.items.map(i => `${i.name} ×${i.quantity}`).join("، ");
+      const items = o.items.map(i => `${getOrderItemDisplayName(i)} ×${i.quantity}`).join("، ");
       const t = new Date(o.createdAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
       return `<tr style="border-bottom:1px solid #eee;${o.status === "cancelled" ? "color:#999;" : ""}">
         <td style="padding:5px 8px;text-align:center;">#${o.dailyNumber ?? o.id}</td>
@@ -1783,7 +1810,7 @@ ${daySections}
                       <View style={{ paddingHorizontal: 14, paddingVertical: 8, gap: 3 }}>
                         {order.items.map((item, i) => (
                           <View key={i} style={{ flexDirection: "row-reverse", justifyContent: "space-between" }}>
-                            <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 13 }} numberOfLines={1}>× {item.quantity}  {item.name}</Text>
+                            <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 13 }} numberOfLines={1}>× {item.quantity}  {getOrderItemDisplayName(item)}</Text>
                             <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 12 }}>{(item.price * pf * item.quantity).toFixed(2)}</Text>
                           </View>
                         ))}
@@ -2030,7 +2057,7 @@ ${daySections}
                           : (item.price * pf * item.quantity).toFixed(1)} ر.س
                       </Text>
                       <Text style={[styles.itemName, { color: colors.foreground, fontFamily: F.semi }]} numberOfLines={1}>
-                        {item.name} × {item.quantity}
+                        {getOrderItemDisplayName(item)} × {item.quantity}
                       </Text>
                     </View>
                   ))}
@@ -2306,7 +2333,7 @@ ${daySections}
                         {fmt(item.price * priceFactor * item.quantity)} ر.س
                       </Text>
                       <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 12 }}>
-                        {item.name} × {item.quantity}
+                        {getOrderItemDisplayName(item)} × {item.quantity}
                       </Text>
                     </View>
                   ))}

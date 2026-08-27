@@ -376,10 +376,10 @@ export default function CheckoutScreen() {
           if (!fresh || fresh.stock === null) continue;
           if (ci.quantity > fresh.stock) {
             if (fresh.stock === 0) {
-              updateQuantity(ci.item.id, 0); // remove from cart
+              updateQuantity(ci.cartKey, 0); // remove from cart
               adjustments.push(isEn ? `"${ci.item.name}" is out of stock and was removed` : `"${ci.item.name}" نفد المخزون وتم إزالته`);
             } else {
-              updateQuantity(ci.item.id, fresh.stock); // reduce to available
+              updateQuantity(ci.cartKey, fresh.stock); // reduce to available
               adjustments.push(isEn ? `"${ci.item.name}": reduced to ${fresh.stock} (available qty)` : `"${ci.item.name}": تم تعديل الكمية إلى ${fresh.stock} فقط`);
             }
           }
@@ -414,12 +414,18 @@ export default function CheckoutScreen() {
         items: items.map((ci) => {
           const extra = ci.customization?.extraPrice ?? 0;
           const displayName = resolveCartItemName(ci.item.name, ci.customization);
-          const parts = resolveCustomizationParts(ci.customization);
+          const parts = resolveCustomizationParts(ci.customization, displayName);
           return {
             id: ci.item.id,
             name: parts.length > 0 ? `${displayName} (${parts.join(" | ")})` : displayName,
             price: ci.item.price + extra,
             quantity: ci.quantity,
+            customization: ci.customization ? {
+              size: ci.customization.size,
+              riceType: ci.customization.riceType,
+              addon: ci.customization.addon,
+              selectedOptions: ci.customization.selectedOptions,
+            } : undefined,
           };
         }),
         totalPrice: grandTotal,
@@ -461,7 +467,7 @@ export default function CheckoutScreen() {
         total: grandTotal,
         items: items.map((ci) => {
           const displayName = resolveCartItemName(ci.item.name, ci.customization);
-          const parts = resolveCustomizationParts(ci.customization);
+          const parts = resolveCustomizationParts(ci.customization, displayName);
           return {
             name: parts.length > 0 ? `${displayName} (${parts.join(" | ")})` : displayName,
             quantity: ci.quantity,
@@ -1095,7 +1101,7 @@ export default function CheckoutScreen() {
             const lineTotalStr = lineTotal % 1 === 0 ? lineTotal.toString() : lineTotal.toFixed(1);
             const name = isEn && ci.item.nameEn ? ci.item.nameEn : resolveCartItemName(ci.item.name, ci.customization);
             return (
-              <React.Fragment key={ci.item.id}>
+              <React.Fragment key={ci.cartKey}>
                 <View style={[styles.rowDivider, { backgroundColor: colors.border }]} />
                 <View style={[styles.listRow, dyn.row]}>
                   <Text style={[styles.rowValue, dyn.val, { color: colors.mutedForeground, fontFamily: F.bold }]}>

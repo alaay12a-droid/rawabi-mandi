@@ -17,7 +17,19 @@ import { Switch } from "@/components/ui/switch";
 
 type OrderStatus = "pending" | "preparing" | "ready" | "out_for_delivery" | "done" | "cancelled";
 type OrderType = "delivery" | "pickup";
-interface OrderItem { id: string; name: string; price: number; quantity: number; }
+interface OrderItemCustomization {
+  size?: string;
+  riceType?: string;
+  addon?: string;
+  selectedOptions?: { groupName: string; choice: string }[];
+}
+interface OrderItem {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  customization?: OrderItemCustomization;
+}
 interface Order {
   id: number; dailyNumber: number | null; customerName: string; customerPhone: string;
   customerAddress: string | null; items: OrderItem[]; totalPrice: number; deliveryFee: number;
@@ -113,6 +125,27 @@ const fmt2   = (n: number) => n % 1 === 0 ? String(n) : n.toFixed(2);
 const sar    = (h: number) => `${fmt2(h / 100)} ر.س`;
 const sarRaw = (h: number) => fmt2(h / 100);
 
+function getOrderItemDisplayName(item: OrderItem): string {
+  const size = item.customization?.size?.trim();
+  if (!size) return item.name;
+
+  if (size === "نصف") {
+    if (item.name.includes("حبة كاملة")) return item.name.replace("حبة كاملة", "نص حبة");
+    if (/(?:نص حبة|نص دجاجة|نصف دجاجة)/.test(item.name)) return item.name;
+    return `${item.name} - ${item.name.includes("دجاج") ? "نص دجاجة" : "نصف"}`;
+  }
+
+  if (size === "حبة كاملة") {
+    if (item.name.includes("نص حبة")) return item.name.replace("نص حبة", "حبة كاملة");
+    if (item.name.includes("نص دجاجة")) return item.name.replace("نص دجاجة", "حبة كاملة");
+    if (item.name.includes("نصف دجاجة")) return item.name.replace("نصف دجاجة", "حبة كاملة");
+    if (item.name.includes("حبة كاملة")) return item.name;
+    return `${item.name} - حبة كاملة`;
+  }
+
+  return item.name.includes(size) ? item.name : `${item.name} - ${size}`;
+}
+
 function printReceipt(order: Order) {
   const date = new Date(order.createdAt);
   const dateStr = date.toLocaleDateString("ar-SA", { day: "numeric", month: "long", year: "numeric" });
@@ -131,8 +164,9 @@ function printReceipt(order: Order) {
       "'": "&#39;",
     })[character] ?? character);
   const itemsRows = order.items.map((item, index) => {
-    const modifierMatch = item.name.match(/^(.*?)\s+\(([^()]*)\)$/);
-    const itemName = modifierMatch?.[1] ?? item.name;
+    const displayName = getOrderItemDisplayName(item);
+    const modifierMatch = displayName.match(/^(.*?)\s+\(([^()]*)\)$/);
+    const itemName = modifierMatch?.[1] ?? displayName;
     const modifiers = modifierMatch?.[2] ?? "";
     const unitPrice = item.price * pf;
     const lineTotal = unitPrice * item.quantity;
@@ -198,7 +232,7 @@ function printBulk(orders: Order[]) {
   const pages = orders.map(o => {
     const time = new Date(o.createdAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
     const pf = getOrderPriceFactor(o);
-    const itemsRows = o.items.map(i => `<tr><td style="padding:3px 6px">${i.name} × ${i.quantity}</td><td style="padding:3px 6px;text-align:left">${fmt2(i.price*i.quantity*pf)} ر.س</td></tr>`).join("");
+    const itemsRows = o.items.map(i => `<tr><td style="padding:3px 6px">${getOrderItemDisplayName(i)} × ${i.quantity}</td><td style="padding:3px 6px;text-align:left">${fmt2(i.price*i.quantity*pf)} ر.س</td></tr>`).join("");
     return `<div style="page-break-after:always;padding:8mm;font-family:Cairo,sans-serif;direction:rtl">
 <h2 style="text-align:center;color:#8B4513;font-size:16px;margin-bottom:2px">روابي المندي</h2>
 <p style="text-align:center;font-size:10px;color:#888;margin-bottom:2px">الرقم الضريبي: 302282730200003</p>
@@ -816,7 +850,7 @@ export default function Orders() {
                     return (
                       <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                         <span style={{ color: C.sub }}>{fmt2(linePrice)} ر.س</span>
-                        <span style={{ color: C.text }}>{item.name} × {item.quantity}</span>
+                        <span style={{ color: C.text }}>{getOrderItemDisplayName(item)} × {item.quantity}</span>
                       </div>
                     );
                   });
@@ -1236,7 +1270,7 @@ export default function Orders() {
                     <div style={{ display: "grid", gap: 4 }}>
                       {order.items.map(item => (
                         <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, color: C.sub, fontSize: 11.5 }}>
-                          <span style={{ color: C.text }}>{item.name}</span>
+                          <span style={{ color: C.text }}>{getOrderItemDisplayName(item)}</span>
                           <span style={{ color: C.amber, fontWeight: 700, whiteSpace: "nowrap" }}>× {item.quantity}</span>
                         </div>
                       ))}

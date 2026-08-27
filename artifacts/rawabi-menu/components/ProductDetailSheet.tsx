@@ -34,7 +34,7 @@ const ADDON_OPTIONS: { label: string; extra: number }[] = [
 
 const RICE_CATS = new Set(["chicken", "meat", "mains"]);
 
-function itemNeedsCustomization(item: MenuItem): boolean {
+export function itemNeedsCustomization(item: MenuItem): boolean {
   if (!RICE_CATS.has(item.category)) return false;
   if (item.description?.includes("بدون رز")) return false;
   if (item.name.includes("سادة")) return false;

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from "react";
-import { MenuItem } from "@/constants/menu";
+import type { MenuItem } from "@/constants/menu";
 
 export interface CartCustomization {
   size?: string;
@@ -10,6 +10,7 @@ export interface CartCustomization {
 }
 
 export interface CartItem {
+  cartKey: string;
   item: MenuItem;
   quantity: number;
   customization?: CartCustomization;
@@ -31,33 +32,61 @@ interface CartState {
 const CartActionsContext = createContext<CartActions | undefined>(undefined);
 const CartStateContext = createContext<CartState | undefined>(undefined);
 
+export function createCartKey(itemId: string, customization?: CartCustomization): string {
+  const normalized = {
+    size: customization?.size ?? "",
+    riceType: customization?.riceType ?? "",
+    addon: customization?.addon ?? "",
+    selectedOptions: customization?.selectedOptions ?? [],
+  };
+  const hasCustomization =
+    normalized.size !== "" ||
+    normalized.riceType !== "" ||
+    normalized.addon !== "" ||
+    normalized.selectedOptions.length > 0;
+
+  return hasCustomization ? `${itemId}::${JSON.stringify(normalized)}` : itemId;
+}
+
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
   const addItem = useCallback((item: MenuItem, qty: number = 1, customization?: CartCustomization) => {
     setItems((prev) => {
-      const existing = prev.find((c) => c.item.id === item.id);
+      const cartKey = createCartKey(item.id, customization);
+      const existing = prev.find((c) => c.cartKey === cartKey);
       if (existing) {
         return prev.map((c) =>
-          c.item.id === item.id ? { ...c, quantity: c.quantity + qty } : c
+          c.cartKey === cartKey ? { ...c, quantity: c.quantity + qty } : c
         );
       }
-      return [...prev, { item, quantity: qty, customization }];
+      return [...prev, { cartKey, item, quantity: qty, customization }];
     });
   }, []);
 
-  const removeItem = useCallback((itemId: string) => {
-    setItems((prev) => prev.filter((c) => c.item.id !== itemId));
+  const removeItem = useCallback((cartKey: string) => {
+    setItems((prev) => {
+      const exactMatch = prev.some((c) => c.cartKey === cartKey);
+      if (exactMatch) return prev.filter((c) => c.cartKey !== cartKey);
+
+      const matchingItems = prev.filter((c) => c.item.id === cartKey);
+      if (matchingItems.length === 1) {
+        return prev.filter((c) => c.cartKey !== matchingItems[0].cartKey);
+      }
+      return prev;
+    });
   }, []);
 
-  const updateQuantity = useCallback((itemId: string, quantity: number) => {
-    if (quantity <= 0) {
-      setItems((prev) => prev.filter((c) => c.item.id !== itemId));
-    } else {
-      setItems((prev) =>
-        prev.map((c) => (c.item.id === itemId ? { ...c, quantity } : c))
-      );
-    }
+  const updateQuantity = useCallback((cartKey: string, quantity: number) => {
+    setItems((prev) => {
+      const exactMatch = prev.find((c) => c.cartKey === cartKey);
+      const matchingItems = exactMatch ? [] : prev.filter((c) => c.item.id === cartKey);
+      const targetKey = exactMatch?.cartKey ?? (matchingItems.length === 1 ? matchingItems[0].cartKey : null);
+      if (!targetKey) return prev;
+
+      if (quantity <= 0) return prev.filter((c) => c.cartKey !== targetKey);
+      return prev.map((c) => (c.cartKey === targetKey ? { ...c, quantity } : c));
+    });
   }, []);
 
   const clearCart = useCallback(() => setItems([]), []);

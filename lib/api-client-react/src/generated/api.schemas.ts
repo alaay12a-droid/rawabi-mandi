@@ -28,11 +28,24 @@ export interface DashboardUser {
   role: DashboardUserRole;
 }
 
+export interface OrderItemSelectedOption {
+  groupName: string;
+  choice: string;
+}
+
+export interface OrderItemCustomization {
+  size?: string;
+  riceType?: string;
+  addon?: string;
+  selectedOptions?: OrderItemSelectedOption[];
+}
+
 export interface OrderItem {
   id: string;
   name: string;
   price: number;
   quantity: number;
+  customization?: OrderItemCustomization;
 }
 
 export type OrderOrderType =
@@ -203,6 +216,34 @@ export interface DriverDailySummary {
   electronicTotal: number;
 }
 
+export interface DriverRatingInput {
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  stars: number;
+  comment?: string | null;
+}
+
+export interface DriverReview {
+  orderId: number;
+  stars: number;
+  comment?: string | null;
+  createdAt?: string;
+}
+
+export interface DriverRankingEntry {
+  id: number;
+  name: string;
+  phone: string;
+  photoUrl?: string | null;
+  active: boolean;
+  completedDeliveries: number;
+  totalRatings: number;
+  avgStars?: number | null;
+  recentReviews: DriverReview[];
+}
+
 export type ListOrdersParams = {
   status?: ListOrdersStatus;
   phone?: string;
@@ -226,4 +267,9 @@ export const ListOrdersStatus = {
 export type GetRevenueRangeParams = {
   from: string;
   to: string;
+};
+
+export type SubmitDriverRating200 = {
+  ok?: boolean;
+  stars?: number;
 };

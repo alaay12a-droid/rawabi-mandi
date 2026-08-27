@@ -139,7 +139,9 @@ export default function MenuScreen() {
   const { items: cartItems } = useCartState();
   const qtyMap = useMemo(() => {
     const m = new Map<string, number>();
-    for (const ci of cartItems) m.set(ci.item.id, ci.quantity);
+    for (const ci of cartItems) {
+      m.set(ci.item.id, (m.get(ci.item.id) ?? 0) + ci.quantity);
+    }
     return m;
   }, [cartItems]);
   // Stable ref — updated every render so renderMenuListItem reads fresh quantities

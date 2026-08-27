@@ -21,6 +21,8 @@ import type {
   DashboardUser,
   Driver,
   DriverDailySummary,
+  DriverRankingEntry,
+  DriverRatingInput,
   GetRevenueRangeParams,
   HealthStatus,
   ListOrdersParams,
@@ -30,6 +32,7 @@ import type {
   Order,
   OrderStatusUpdate,
   RevenueData,
+  SubmitDriverRating200,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1253,6 +1256,168 @@ export function useGetDriverDailySummaries<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDriverDailySummariesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Submit a driver rating after delivery
+ */
+export const getSubmitDriverRatingUrl = (id: number) => {
+  return `/api/orders/${id}/driver-rating`;
+};
+
+export const submitDriverRating = async (
+  id: number,
+  driverRatingInput: DriverRatingInput,
+  options?: RequestInit,
+): Promise<SubmitDriverRating200> => {
+  return customFetch<SubmitDriverRating200>(getSubmitDriverRatingUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(driverRatingInput),
+  });
+};
+
+export const getSubmitDriverRatingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitDriverRating>>,
+    TError,
+    { id: number; data: BodyType<DriverRatingInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitDriverRating>>,
+  TError,
+  { id: number; data: BodyType<DriverRatingInput> },
+  TContext
+> => {
+  const mutationKey = ["submitDriverRating"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitDriverRating>>,
+    { id: number; data: BodyType<DriverRatingInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return submitDriverRating(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitDriverRatingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitDriverRating>>
+>;
+export type SubmitDriverRatingMutationBody = BodyType<DriverRatingInput>;
+export type SubmitDriverRatingMutationError = ErrorType<void>;
+
+/**
+ * @summary Submit a driver rating after delivery
+ */
+export const useSubmitDriverRating = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitDriverRating>>,
+    TError,
+    { id: number; data: BodyType<DriverRatingInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitDriverRating>>,
+  TError,
+  { id: number; data: BodyType<DriverRatingInput> },
+  TContext
+> => {
+  return useMutation(getSubmitDriverRatingMutationOptions(options));
+};
+
+/**
+ * @summary Get all drivers ranked by average rating
+ */
+export const getGetDriverRankingsUrl = () => {
+  return `/api/ratings/drivers`;
+};
+
+export const getDriverRankings = async (
+  options?: RequestInit,
+): Promise<DriverRankingEntry[]> => {
+  return customFetch<DriverRankingEntry[]>(getGetDriverRankingsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDriverRankingsQueryKey = () => {
+  return [`/api/ratings/drivers`] as const;
+};
+
+export const getGetDriverRankingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDriverRankings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDriverRankings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDriverRankingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDriverRankings>>
+  > = ({ signal }) => getDriverRankings({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDriverRankings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDriverRankingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDriverRankings>>
+>;
+export type GetDriverRankingsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get all drivers ranked by average rating
+ */
+
+export function useGetDriverRankings<
+  TData = Awaited<ReturnType<typeof getDriverRankings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDriverRankings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDriverRankingsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

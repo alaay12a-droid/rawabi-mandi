@@ -1,4 +1,4 @@
-import { CartCustomization } from "@/context/CartContext";
+import type { CartCustomization } from "@/context/CartContext";
 
 const MEAT_SIZES = ["ربع", "نصف", "كامل"];
 
@@ -36,16 +36,22 @@ export function resolveCartItemName(
     if (baseName.includes("حبة كاملة")) return baseName.replace("حبة كاملة", "نص حبة");
     // "حبة على الفحم ..."  →  "نص حبة على الفحم ..."
     if (baseName.startsWith("حبة ")) return "نص " + baseName;
-    return baseName; // already نص
+    if (baseName.includes("نص حبة") || baseName.includes("نص دجاجة") || baseName.includes("نصف دجاجة")) {
+      return baseName;
+    }
+    return `${baseName} - ${baseName.includes("دجاج") ? "نص دجاجة" : "نصف"}`;
   }
 
   // ── Chicken: size = حبة كاملة ──
   if (size === "حبة كاملة") {
     // "X نص حبة مع Y"  →  "X حبة كاملة مع Y"
-    if (baseName.includes("نص حبة مع")) return baseName.replace("نص حبة", "حبة كاملة");
+    if (baseName.includes("نص حبة")) return baseName.replace("نص حبة", "حبة كاملة");
+    if (baseName.includes("نص دجاجة")) return baseName.replace("نص دجاجة", "حبة كاملة");
+    if (baseName.includes("نصف دجاجة")) return baseName.replace("نصف دجاجة", "حبة كاملة");
     // "نص حبة على الفحم ..."  →  "حبة على الفحم ..."  (drop the "نص " prefix)
     if (baseName.startsWith("نص حبة ")) return baseName.slice("نص ".length);
-    return baseName; // already كاملة or not نص
+    if (baseName.includes("حبة كاملة")) return baseName;
+    return `${baseName} - حبة كاملة`;
   }
 
   return baseName;
@@ -56,16 +62,21 @@ export function resolveCartItemName(
  * omitting the size when it has already been embedded in the name.
  */
 export function resolveCustomizationParts(
-  customization?: CartCustomization
+  customization?: CartCustomization,
+  displayName?: string
 ): string[] {
   const parts: string[] = [];
   const size = customization?.size;
 
-  // Size is always embedded in the display name — never repeat it in subtitle
-  const sizeInName =
-    size === "نصف" ||
-    size === "حبة كاملة" ||
-    (size !== undefined && MEAT_SIZES.includes(size));
+  const sizeAliases =
+    size === "نصف"
+      ? ["نصف", "نص حبة", "نص دجاجة", "نصف دجاجة"]
+      : size === "حبة كاملة"
+        ? ["حبة كاملة"]
+        : size
+          ? [size]
+          : [];
+  const sizeInName = !!displayName && sizeAliases.some((alias) => displayName.includes(alias));
 
   if (size && !sizeInName) parts.push(size);
   if (customization?.riceType) parts.push(customization.riceType);

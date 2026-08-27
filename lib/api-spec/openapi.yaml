@@ -385,6 +385,29 @@ components:
       required: [id, username, role]
 
     # ── Orders ────────────────────────────────────────────────────────
+    OrderItemSelectedOption:
+      type: object
+      properties:
+        groupName:
+          type: string
+        choice:
+          type: string
+      required: [groupName, choice]
+
+    OrderItemCustomization:
+      type: object
+      properties:
+        size:
+          type: string
+        riceType:
+          type: string
+        addon:
+          type: string
+        selectedOptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItemSelectedOption"
+
     OrderItem:
       type: object
       properties:
@@ -396,6 +419,8 @@ components:
           type: integer
         quantity:
           type: integer
+        customization:
+          $ref: "#/components/schemas/OrderItemCustomization"
       required: [id, name, price, quantity]
 
     Order:

@@ -12,6 +12,7 @@ import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import { useCartActions } from "@/context/CartContext";
 import { MenuItem, FOOD_IMAGES } from "@/constants/menu";
+import { itemNeedsCustomization } from "@/components/ProductDetailSheet";
 
 const F = {
   regular: "Cairo_400Regular",
@@ -48,7 +49,7 @@ function MenuItemCardInner({ item, quantity, onPress, isEn, isFavorite: faved, o
 
   // Item needs detail sheet if it has configurable sizes or option groups
   const hasOptions =
-    (item.sizes?.filter(s => s.enabled).length ?? 0) > 0 ||
+    itemNeedsCustomization(item) ||
     (item.options?.some(g => g.choices.some(c => c.available)) ?? false);
 
   const handleAdd = useCallback(() => {
@@ -169,6 +170,19 @@ function MenuItemCardInner({ item, quantity, onPress, isEn, isFavorite: faved, o
               >
                 <Feather name="plus" size={18} color={atStockLimit ? colors.mutedForeground : "#fff"} />
               </TouchableOpacity>
+            ) : hasOptions ? (
+              <View style={styles.qtyGroup}>
+                <TouchableOpacity
+                  onPress={handleAdd}
+                  style={[styles.qtyRound, { backgroundColor: atStockLimit ? (colors.isLight ? "#E0D0C0" : "#2A1A0A") : colors.primary }]}
+                  disabled={atStockLimit}
+                >
+                  <Feather name="plus" size={13} color={atStockLimit ? colors.mutedForeground : "#fff"} />
+                </TouchableOpacity>
+                <View style={[styles.qtyNumBox, { backgroundColor: colors.gold }]}>
+                  <Text style={[styles.qtyNumText, { fontFamily: F.extra }]}>{quantity}</Text>
+                </View>
+              </View>
             ) : (
               <View style={styles.qtyGroup}>
                 <TouchableOpacity

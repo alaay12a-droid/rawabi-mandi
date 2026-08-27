@@ -5,10 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { OrderItemCustomization } from "./orderItemCustomization";
 
 export interface OrderItem {
   id: string;
   name: string;
   price: number;
   quantity: number;
+  customization?: OrderItemCustomization;
 }

@@ -131,11 +131,43 @@ const F = {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Driver    { id: number; name: string; phone: string; photoUrl: string | null; active: boolean; isOnline: boolean; }
-interface OrderItem { id: string; name: string; price: number; quantity: number; }
+interface OrderItem {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  customization?: {
+    size?: string;
+    riceType?: string;
+    addon?: string;
+    selectedOptions?: { groupName: string; choice: string }[];
+  };
+}
 interface Order     { id: number; dailyNumber: number; customerName: string; customerPhone: string; customerAddress: string | null; items: OrderItem[]; totalPrice: number; status: string; notes: string | null; createdAt: string; }
 interface Assignment{ orderId: number; driverId: number; status: string; assignedAt: string; pickedUpAt: string | null; deliveredAt: string | null; }
 interface Row       { assignment: Assignment; order: Order | null; }
 interface DriverConvo { orderId: number; lastText: string; fromDriver: boolean; lastAt: string; unread: number; order: { id: number; dailyNumber: number; customerName: string; customerPhone: string } | null; }
+
+function getOrderItemDisplayName(item: OrderItem): string {
+  const size = item.customization?.size?.trim();
+  if (!size) return item.name;
+
+  if (size === "نصف") {
+    if (item.name.includes("حبة كاملة")) return item.name.replace("حبة كاملة", "نص حبة");
+    if (/(?:نص حبة|نص دجاجة|نصف دجاجة)/.test(item.name)) return item.name;
+    return `${item.name} - ${item.name.includes("دجاج") ? "نص دجاجة" : "نصف"}`;
+  }
+
+  if (size === "حبة كاملة") {
+    if (item.name.includes("نص حبة")) return item.name.replace("نص حبة", "حبة كاملة");
+    if (item.name.includes("نص دجاجة")) return item.name.replace("نص دجاجة", "حبة كاملة");
+    if (item.name.includes("نصف دجاجة")) return item.name.replace("نصف دجاجة", "حبة كاملة");
+    if (item.name.includes("حبة كاملة")) return item.name;
+    return `${item.name} - حبة كاملة`;
+  }
+
+  return item.name.includes(size) ? item.name : `${item.name} - ${size}`;
+}
 interface DriverMsg { id: number; orderId: number; text: string; fromCashier: boolean; driverId: number | null; createdAt: string; readAt: string | null; }
 interface StmtOrder { orderId: number; dailyNumber: number | null; customerName: string; totalPrice: number; deliveredAt: string; }
 interface StmtPeriod{ ordersCount: number; totalCollected: number; }
@@ -1059,7 +1091,7 @@ function DriverHome({ driver, onLogout }: { driver: Driver; onLogout: () => void
                 <View style={{ backgroundColor: colors.secondary, borderRadius: 10, padding: 10, gap: 4 }}>
                   {order.items.map((item, i) => (
                     <View key={i} style={{ flexDirection: "row-reverse", justifyContent: "space-between" }}>
-                      <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 13 }}>×{item.quantity} {item.name}</Text>
+                      <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 13 }}>×{item.quantity} {getOrderItemDisplayName(item)}</Text>
                       <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 12 }}>{item.price * item.quantity} ر.س</Text>
                     </View>
                   ))}

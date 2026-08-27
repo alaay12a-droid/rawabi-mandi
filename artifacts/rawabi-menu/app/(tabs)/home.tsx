@@ -93,7 +93,9 @@ export default function HomeScreen() {
   // qtyMap: parent is the only CartContext subscriber — rows get quantity as prop
   const qtyMap = useMemo(() => {
     const m = new Map<string, number>();
-    for (const ci of cartItems) m.set(ci.item.id, ci.quantity);
+    for (const ci of cartItems) {
+      m.set(ci.item.id, (m.get(ci.item.id) ?? 0) + ci.quantity);
+    }
     return m;
   }, [cartItems]);
 

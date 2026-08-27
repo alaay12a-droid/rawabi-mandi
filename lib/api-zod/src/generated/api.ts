@@ -63,6 +63,21 @@ export const ListOrdersResponseItem = zod.object({
       name: zod.string(),
       price: zod.number(),
       quantity: zod.number(),
+      customization: zod
+        .object({
+          size: zod.string().optional(),
+          riceType: zod.string().optional(),
+          addon: zod.string().optional(),
+          selectedOptions: zod
+            .array(
+              zod.object({
+                groupName: zod.string(),
+                choice: zod.string(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
     }),
   ),
   totalPrice: zod.number(),
@@ -96,6 +111,21 @@ export const GetOrderResponse = zod.object({
       name: zod.string(),
       price: zod.number(),
       quantity: zod.number(),
+      customization: zod
+        .object({
+          size: zod.string().optional(),
+          riceType: zod.string().optional(),
+          addon: zod.string().optional(),
+          selectedOptions: zod
+            .array(
+              zod.object({
+                groupName: zod.string(),
+                choice: zod.string(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
     }),
   ),
   totalPrice: zod.number(),
@@ -132,6 +162,21 @@ export const UpdateOrderStatusResponse = zod.object({
       name: zod.string(),
       price: zod.number(),
       quantity: zod.number(),
+      customization: zod
+        .object({
+          size: zod.string().optional(),
+          riceType: zod.string().optional(),
+          addon: zod.string().optional(),
+          selectedOptions: zod
+            .array(
+              zod.object({
+                groupName: zod.string(),
+                choice: zod.string(),
+              }),
+            )
+            .optional(),
+        })
+        .optional(),
     }),
   ),
   totalPrice: zod.number(),
@@ -500,4 +545,48 @@ export const GetDriverDailySummariesResponseItem = zod.object({
 });
 export const GetDriverDailySummariesResponse = zod.array(
   GetDriverDailySummariesResponseItem,
+);
+
+/**
+ * @summary Submit a driver rating after delivery
+ */
+export const SubmitDriverRatingParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const submitDriverRatingBodyStarsMax = 5;
+
+export const SubmitDriverRatingBody = zod.object({
+  stars: zod.number().min(1).max(submitDriverRatingBodyStarsMax),
+  comment: zod.string().nullish(),
+});
+
+export const SubmitDriverRatingResponse = zod.object({
+  ok: zod.boolean().optional(),
+  stars: zod.number().optional(),
+});
+
+/**
+ * @summary Get all drivers ranked by average rating
+ */
+export const GetDriverRankingsResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  phone: zod.string(),
+  photoUrl: zod.string().nullish(),
+  active: zod.boolean(),
+  completedDeliveries: zod.number(),
+  totalRatings: zod.number(),
+  avgStars: zod.number().nullish(),
+  recentReviews: zod.array(
+    zod.object({
+      orderId: zod.number(),
+      stars: zod.number(),
+      comment: zod.string().nullish(),
+      createdAt: zod.string().optional(),
+    }),
+  ),
+});
+export const GetDriverRankingsResponse = zod.array(
+  GetDriverRankingsResponseItem,
 );

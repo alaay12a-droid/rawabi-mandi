@@ -18,6 +18,15 @@ const createOrderSchema = z.object({
       name: z.string(),
       price: z.number(),
       quantity: z.number().int().positive(),
+      customization: z.object({
+        size: z.string().min(1).optional(),
+        riceType: z.string().min(1).optional(),
+        addon: z.string().min(1).optional(),
+        selectedOptions: z.array(z.object({
+          groupName: z.string().min(1),
+          choice: z.string().min(1),
+        })).optional(),
+      }).optional(),
     })
   ).min(1),
   totalPrice: z.number().positive(),
@@ -84,16 +93,27 @@ router.post("/orders", async (req, res) => {
     return;
   }
 
-  // ── Validate stock before inserting ────────────────────────────────────────
+  // Variants of one product can be separate cart lines, so stock must be checked
+  // and decremented using their combined quantity.
+  const requestedByItemId = new Map<string, { quantity: number; name: string }>();
   for (const item of data.items) {
-    const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, item.id));
+    const existing = requestedByItemId.get(item.id);
+    requestedByItemId.set(item.id, {
+      quantity: (existing?.quantity ?? 0) + item.quantity,
+      name: existing?.name ?? item.name,
+    });
+  }
+
+  // ── Validate stock before inserting ────────────────────────────────────────
+  for (const [itemId, requested] of requestedByItemId) {
+    const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, itemId));
     if (menuItem && menuItem.stock !== null) {
-      if (menuItem.stock < item.quantity) {
+      if (menuItem.stock < requested.quantity) {
         res.status(409).json({
           error: menuItem.stock === 0
-            ? `نفد المخزون: ${item.name}`
-            : `الكمية المتاحة من "${item.name}" هي ${menuItem.stock} فقط`,
-          itemId: item.id,
+            ? `نفد المخزون: ${requested.name}`
+            : `الكمية المتاحة من "${requested.name}" هي ${menuItem.stock} فقط`,
+          itemId,
           available: menuItem.stock,
         });
         return;
@@ -120,13 +140,13 @@ router.post("/orders", async (req, res) => {
     branchName: data.branchName ?? null,
   }).returning();
 
-  for (const item of data.items) {
-    const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, item.id));
+  for (const [itemId, requested] of requestedByItemId) {
+    const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, itemId));
     if (menuItem && menuItem.stock !== null) {
-      const newStock = Math.max(0, menuItem.stock - item.quantity);
+      const newStock = Math.max(0, menuItem.stock - requested.quantity);
       await db.update(menuItemsTable)
         .set({ stock: newStock, available: newStock > 0 })
-        .where(eq(menuItemsTable.itemId, item.id));
+        .where(eq(menuItemsTable.itemId, itemId));
     }
   }
 
