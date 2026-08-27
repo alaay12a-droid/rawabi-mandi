@@ -8,6 +8,73 @@ import { processReferralReward } from "./referrals.js";
 
 const router = Router();
 
+type OrderCustomization = z.infer<typeof createOrderSchema>["items"][number]["customization"];
+
+function resolveConfiguredUnitPrice(
+  menuItem: typeof menuItemsTable.$inferSelect,
+  customization: OrderCustomization,
+): number | null {
+  let priceInHalalas = menuItem.price;
+  const enabledSizes = menuItem.sizes.filter((size) => size.enabled);
+
+  if (enabledSizes.length > 0) {
+    const size = enabledSizes.find(
+      (candidate) => candidate.name === customization?.size,
+    );
+    if (!size) return Number.NaN;
+    priceInHalalas = size.price;
+  } else if (customization?.size) {
+    // Old clients could synthesize cross-product sizes. Those prices are
+    // ambiguous once the separate product rows are edited independently.
+    return Number.NaN;
+  }
+
+  const availableRiceTypes = menuItem.riceTypes.filter((choice) => choice.available);
+  if (customization?.riceType && availableRiceTypes.length > 0) {
+    const rice = availableRiceTypes.find(
+      (candidate) => candidate.name === customization.riceType,
+    );
+    if (!rice) return Number.NaN;
+    priceInHalalas += rice?.extraPrice ?? 0;
+  }
+
+  const availableAdditions = menuItem.additions.filter((choice) => choice.available);
+  if (customization?.addon && availableAdditions.length > 0) {
+    const addition = availableAdditions.find(
+      (candidate) => candidate.name === customization.addon,
+    );
+    if (!addition) return Number.NaN;
+    priceInHalalas += addition?.extraPrice ?? 0;
+  }
+
+  const activeOptionGroups = menuItem.options
+    .map((group) => ({
+      ...group,
+      choices: group.choices.filter((choice) => choice.available),
+    }))
+    .filter((group) => group.choices.length > 0);
+  for (const group of activeOptionGroups) {
+    const selected = customization?.selectedOptions?.find(
+      (candidate) => candidate.groupName === group.groupName,
+    );
+    if (!selected) {
+      if (group.required) return Number.NaN;
+      continue;
+    }
+    const choice = group.choices.find((candidate) => candidate.name === selected.choice);
+    if (!choice) return Number.NaN;
+    priceInHalalas += choice.extraPrice;
+  }
+
+  for (const selected of customization?.selectedOptions ?? []) {
+    if (!activeOptionGroups.some((group) => group.groupName === selected.groupName)) {
+      return Number.NaN;
+    }
+  }
+
+  return priceInHalalas / 100;
+}
+
 const createOrderSchema = z.object({
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
@@ -22,6 +89,10 @@ const createOrderSchema = z.object({
         size: z.string().min(1).optional(),
         riceType: z.string().min(1).optional(),
         addon: z.string().min(1).optional(),
+        variantId: z.string().min(1).optional(),
+        variantName: z.string().min(1).optional(),
+        variantPrice: z.number().min(0).optional(),
+        unitPrice: z.number().min(0).optional(),
         selectedOptions: z.array(z.object({
           groupName: z.string().min(1),
           choice: z.string().min(1),
@@ -48,6 +119,49 @@ router.post("/orders", async (req, res) => {
     return;
   }
   const data = parsed.data;
+
+  // Configured variants are authoritative. Reject stale/tampered cart snapshots
+  // instead of silently charging a different amount than the customer saw.
+  for (const item of data.items) {
+    const [menuItem] = await db
+      .select()
+      .from(menuItemsTable)
+      .where(eq(menuItemsTable.itemId, item.id));
+    if (!menuItem) continue;
+
+    const configuredUnitPrice = resolveConfiguredUnitPrice(menuItem, item.customization);
+    const submittedSnapshot = item.customization?.unitPrice;
+    const hasInvalidSelection = configuredUnitPrice != null && Number.isNaN(configuredUnitPrice);
+    const hasStalePrice =
+      configuredUnitPrice != null &&
+      !Number.isNaN(configuredUnitPrice) &&
+      Math.abs(configuredUnitPrice - item.price) > 0.001;
+    const hasInconsistentSnapshot =
+      submittedSnapshot != null && Math.abs(submittedSnapshot - item.price) > 0.001;
+
+    if (hasInvalidSelection || hasStalePrice || hasInconsistentSnapshot) {
+      res.status(409).json({
+        error: "تم تحديث سعر أو خيارات أحد الأصناف. حدّث السلة ثم حاول مرة أخرى.",
+        code: "PRICE_CHANGED",
+        itemId: item.id,
+      });
+      return;
+    }
+  }
+
+  const itemsSubtotal = data.items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
+  const expectedTotal =
+    itemsSubtotal + data.deliveryFee - (data.discountAmount ?? 0);
+  if (Math.abs(expectedTotal - data.totalPrice) > 0.001) {
+    res.status(409).json({
+      error: "إجمالي الطلب لا يطابق أسعار الأصناف الحالية. حدّث السلة ثم حاول مرة أخرى.",
+      code: "PRICE_CHANGED",
+    });
+    return;
+  }
 
   // ── Rate-limit: reject if same phone placed an order within the last 10 seconds ──
   const tenSecondsAgo = new Date(Date.now() - 10 * 1000);

@@ -37,6 +37,10 @@ export interface OrderItemCustomization {
   size?: string;
   riceType?: string;
   addon?: string;
+  variantId?: string;
+  variantName?: string;
+  variantPrice?: number;
+  unitPrice?: number;
   selectedOptions?: OrderItemSelectedOption[];
 }
 

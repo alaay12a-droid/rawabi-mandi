@@ -412,18 +412,21 @@ export default function CheckoutScreen() {
         branchId:   selectedBranch?.id   ?? null,
         branchName: selectedBranch?.name ?? null,
         items: items.map((ci) => {
-          const extra = ci.customization?.extraPrice ?? 0;
           const displayName = resolveCartItemName(ci.item.name, ci.customization);
           const parts = resolveCustomizationParts(ci.customization, displayName);
           return {
             id: ci.item.id,
             name: parts.length > 0 ? `${displayName} (${parts.join(" | ")})` : displayName,
-            price: ci.item.price + extra,
+            price: ci.unitPrice,
             quantity: ci.quantity,
             customization: ci.customization ? {
               size: ci.customization.size,
               riceType: ci.customization.riceType,
               addon: ci.customization.addon,
+              variantId: ci.customization.variantId,
+              variantName: ci.customization.variantName,
+              variantPrice: ci.customization.variantPrice,
+              unitPrice: ci.unitPrice,
               selectedOptions: ci.customization.selectedOptions,
             } : undefined,
           };

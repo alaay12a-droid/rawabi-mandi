@@ -68,6 +68,10 @@ export const ListOrdersResponseItem = zod.object({
           size: zod.string().optional(),
           riceType: zod.string().optional(),
           addon: zod.string().optional(),
+          variantId: zod.string().optional(),
+          variantName: zod.string().optional(),
+          variantPrice: zod.number().optional(),
+          unitPrice: zod.number().optional(),
           selectedOptions: zod
             .array(
               zod.object({
@@ -116,6 +120,10 @@ export const GetOrderResponse = zod.object({
           size: zod.string().optional(),
           riceType: zod.string().optional(),
           addon: zod.string().optional(),
+          variantId: zod.string().optional(),
+          variantName: zod.string().optional(),
+          variantPrice: zod.number().optional(),
+          unitPrice: zod.number().optional(),
           selectedOptions: zod
             .array(
               zod.object({
@@ -167,6 +175,10 @@ export const UpdateOrderStatusResponse = zod.object({
           size: zod.string().optional(),
           riceType: zod.string().optional(),
           addon: zod.string().optional(),
+          variantId: zod.string().optional(),
+          variantName: zod.string().optional(),
+          variantPrice: zod.number().optional(),
+          unitPrice: zod.number().optional(),
           selectedOptions: zod
             .array(
               zod.object({

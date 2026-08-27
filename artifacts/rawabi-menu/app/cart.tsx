@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
-import { useCart } from "@/context/CartContext";
+import { getCartUnitPrice, useCart } from "@/context/CartContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { useMenu } from "@/hooks/useMenu";
 import { useAppConfig } from "@/context/AppConfigContext";
@@ -161,8 +161,7 @@ export default function CartScreen() {
             {/* ── Cart items ── */}
             <View style={[styles.itemsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               {items.map((cartItem, index) => {
-                const extra = cartItem.customization?.extraPrice ?? 0;
-                const unitPrice = cartItem.item.price + extra;
+                const unitPrice = getCartUnitPrice(cartItem.item, cartItem.customization, cartItem.unitPrice);
                 const itemTotal = unitPrice * cartItem.quantity;
                 const totalStr = itemTotal % 1 === 0 ? itemTotal.toString() : itemTotal.toFixed(1);
                 const unitStr = unitPrice % 1 === 0 ? unitPrice.toString() : unitPrice.toFixed(1);
