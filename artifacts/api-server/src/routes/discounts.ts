@@ -147,6 +147,10 @@ router.post("/discount-codes", async (req, res) => {
 
   try {
     const { expiresAt: expiresAtStr, ...restData } = parsed.data;
+    if (expiresAtStr != null && new Date(expiresAtStr) <= new Date()) {
+      res.status(400).json({ error: "وقت انتهاء الصلاحية يجب أن يكون في المستقبل" });
+      return;
+    }
     const insertData = {
       ...restData,
       expiresAt: expiresAtStr != null ? new Date(expiresAtStr) : (expiresAtStr as null | undefined),
@@ -178,6 +182,10 @@ router.patch("/discount-codes/:id", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
   const { expiresAt: expiresAtStr2, ...restUpdate } = parsed.data;
+  if (expiresAtStr2 != null && new Date(expiresAtStr2) <= new Date()) {
+    res.status(400).json({ error: "وقت انتهاء الصلاحية يجب أن يكون في المستقبل" });
+    return;
+  }
   const updateData = {
     ...restUpdate,
     ...(expiresAtStr2 !== undefined

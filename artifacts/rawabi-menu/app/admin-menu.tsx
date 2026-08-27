@@ -1035,6 +1035,7 @@ ${kpiBlock}${payBlock}${sumBlock}
   const [dcMaxUses, setDcMaxUses] = useState("");
   const [dcPickerVisible, setDcPickerVisible] = useState(false);
   const [dcPickerDate, setDcPickerDate] = useState<Date>(new Date());
+  const [dcPickerStep, setDcPickerStep] = useState<"date" | "time">("date");
   const [dcPickerContext, setDcPickerContext] = useState<"edit" | "new">("new");
   const [dcPickerEditId, setDcPickerEditId] = useState<number | null>(null);
   const [dcEditingMaxUsesId, setDcEditingMaxUsesId] = useState<number | null>(null);
@@ -3109,14 +3110,21 @@ ${kpiBlock}${payBlock}${sumBlock}
                   {dc.expiresAt ? (
                     <Text style={{ color: isExpired ? "#E57373" : isExpiringSoon ? "#F5C518" : colors.mutedForeground, fontFamily: F.semi, fontSize: 11, textAlign: "right" }}>
                       {isExpired ? "⏰ انتهت الصلاحية: " : isExpiringSoon ? "⚠️ ينتهي قريباً: " : "⏳ صالح حتى: "}
-                      {new Date(dc.expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })}
+                      {(() => {
+                        const exp = new Date(dc.expiresAt!);
+                        const h = exp.getHours(), m = exp.getMinutes();
+                        const isEndOfDay = h === 23 && m >= 59;
+                        const datePart = exp.toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+                        return isEndOfDay ? datePart : `${datePart} — ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                      })()}
                     </Text>
                   ) : null}
                   {/* Expiry edit row */}
                   <TouchableOpacity
                     onPress={() => {
-                      const initial = dc.expiresAt ? new Date(dc.expiresAt) : new Date();
+                      const initial = dc.expiresAt ? new Date(dc.expiresAt) : (() => { const d = new Date(); d.setHours(23, 59, 0, 0); return d; })();
                       setDcPickerDate(initial);
+                      setDcPickerStep("date");
                       setDcPickerContext("edit");
                       setDcPickerEditId(dc.id);
                       setDcPickerVisible(true);
@@ -3336,7 +3344,9 @@ ${kpiBlock}${payBlock}${sumBlock}
               <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 12, textAlign: "right" }}>تاريخ انتهاء الصلاحية (اختياري)</Text>
               <TouchableOpacity
                 onPress={() => {
-                  setDcPickerDate(dcExpiresAt ?? new Date());
+                  const initial = dcExpiresAt ?? (() => { const d = new Date(); d.setHours(23, 59, 0, 0); return d; })();
+                  setDcPickerDate(initial);
+                  setDcPickerStep("date");
                   setDcPickerContext("new");
                   setDcPickerEditId(null);
                   setDcPickerVisible(true);
@@ -3346,8 +3356,13 @@ ${kpiBlock}${payBlock}${sumBlock}
                 <Feather name="calendar" size={16} color={dcExpiresAt ? colors.gold : colors.mutedForeground} />
                 <Text style={{ color: dcExpiresAt ? colors.foreground : colors.mutedForeground, fontFamily: F.regular, fontSize: 13, flex: 1, textAlign: "right" }}>
                   {dcExpiresAt
-                    ? dcExpiresAt.toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })
-                    : "اختر تاريخاً (اختياري)"}
+                    ? (() => {
+                        const h = dcExpiresAt.getHours(), m = dcExpiresAt.getMinutes();
+                        const isEndOfDay = h === 23 && m === 59;
+                        const datePart = dcExpiresAt.toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+                        return isEndOfDay ? datePart : `${datePart} — ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                      })()
+                    : "اختر تاريخاً واقت الانتهاء (اختياري)"}
                 </Text>
                 {dcExpiresAt && (
                   <TouchableOpacity
@@ -3381,9 +3396,11 @@ ${kpiBlock}${payBlock}${sumBlock}
                 }
                 let expiresAtIso: string | null = null;
                 if (dcExpiresAt) {
-                  const d = new Date(dcExpiresAt);
-                  d.setHours(23, 59, 59, 0);
-                  expiresAtIso = d.toISOString();
+                  if (dcExpiresAt.getTime() <= Date.now()) {
+                    Alert.alert("تنبيه", "وقت انتهاء الصلاحية يجب أن يكون في المستقبل. عدّل الوقت أو التاريخ.");
+                    return;
+                  }
+                  expiresAtIso = dcExpiresAt.toISOString();
                 }
                 const maxUsesVal = dcMaxUses.trim() ? parseInt(dcMaxUses.trim(), 10) : null;
                 if (maxUsesVal !== null && (isNaN(maxUsesVal) || maxUsesVal < 1)) {
@@ -6155,7 +6172,7 @@ ${kpiBlock}${payBlock}${sumBlock}
         </View>
       </Modal>
 
-      {/* Date Picker Modal */}
+      {/* Date/Time Picker Modal */}
       <Modal
         visible={dcPickerVisible}
         transparent
@@ -6166,73 +6183,132 @@ ${kpiBlock}${payBlock}${sumBlock}
           <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderColor: colors.border, paddingBottom: 32, paddingHorizontal: 16, paddingTop: 16, gap: 14 }}>
             {/* Header */}
             <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 16 }}>تاريخ انتهاء الصلاحية</Text>
-              <TouchableOpacity onPress={() => setDcPickerVisible(false)}>
-                <Feather name="x" size={22} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
-            {/* Picker */}
-            <View style={{ alignItems: "center" }}>
-              <DateTimePicker
-                value={dcPickerDate}
-                mode="date"
-                display={Platform.OS === "ios" ? "spinner" : "calendar"}
-                onChange={(_event, date) => { if (date) setDcPickerDate(date); }}
-                minimumDate={new Date()}
-                style={{ width: "100%" }}
-                themeVariant="dark"
-              />
-            </View>
-            {/* Selected date preview */}
-            <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13, textAlign: "center" }}>
-              {dcPickerDate.toLocaleDateString("ar-SA", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
-            </Text>
-            {/* Action buttons */}
-            <View style={{ flexDirection: "row-reverse", gap: 8 }}>
-              <TouchableOpacity
-                onPress={async () => {
-                  const d = new Date(dcPickerDate);
-                  d.setHours(23, 59, 59, 0);
-                  const iso = d.toISOString();
-                  if (dcPickerContext === "edit" && dcPickerEditId != null) {
-                    try {
-                      await updateCode(dcPickerEditId, { expiresAt: iso });
-                    } catch { Alert.alert("خطأ", "تعذّر تحديث تاريخ الانتهاء"); }
-                  } else {
-                    setDcExpiresAt(dcPickerDate);
-                  }
-                  setDcPickerVisible(false);
-                }}
-                style={{ flex: 2, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.gold }}
-              >
-                <Text style={{ color: "#1A0A00", fontFamily: F.bold, fontSize: 14 }}>حفظ التاريخ</Text>
-              </TouchableOpacity>
-              {(dcPickerContext === "edit"
-                ? discountCodes.find((d) => d.id === dcPickerEditId)?.expiresAt
-                : dcExpiresAt) ? (
-                <TouchableOpacity
-                  onPress={async () => {
-                    if (dcPickerContext === "edit" && dcPickerEditId != null) {
-                      try {
-                        await updateCode(dcPickerEditId, { expiresAt: null });
-                      } catch { Alert.alert("خطأ", "تعذّر إزالة تاريخ الانتهاء"); }
-                    } else {
-                      setDcExpiresAt(null);
-                    }
-                    setDcPickerVisible(false);
-                  }}
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: "#2A0A08", borderWidth: 1, borderColor: "#E5737355" }}
-                >
-                  <Text style={{ color: "#E57373", fontFamily: F.semi, fontSize: 13 }}>إزالة</Text>
+              <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 16 }}>
+                {dcPickerStep === "date" ? "تاريخ انتهاء الصلاحية" : "وقت انتهاء الصلاحية"}
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                {/* Step indicator */}
+                <View style={{ flexDirection: "row", gap: 5, alignItems: "center" }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dcPickerStep === "date" ? colors.gold : colors.border }} />
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dcPickerStep === "time" ? colors.gold : colors.border }} />
+                </View>
+                <TouchableOpacity onPress={() => setDcPickerVisible(false)}>
+                  <Feather name="x" size={22} color={colors.mutedForeground} />
                 </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                onPress={() => setDcPickerVisible(false)}
-                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }}
-              >
-                <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13 }}>إلغاء</Text>
-              </TouchableOpacity>
+              </View>
             </View>
+
+            {/* Step 1: Date picker */}
+            {dcPickerStep === "date" && (
+              <>
+                <View style={{ alignItems: "center" }}>
+                  <DateTimePicker
+                    value={dcPickerDate}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "spinner" : "calendar"}
+                    onChange={(_event, date) => {
+                      if (date) {
+                        // Preserve the existing time when changing date
+                        const combined = new Date(date);
+                        combined.setHours(dcPickerDate.getHours(), dcPickerDate.getMinutes(), 0, 0);
+                        setDcPickerDate(combined);
+                      }
+                    }}
+                    minimumDate={new Date()}
+                    style={{ width: "100%" }}
+                    themeVariant="dark"
+                  />
+                </View>
+                <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13, textAlign: "center" }}>
+                  {dcPickerDate.toLocaleDateString("ar-SA", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+                </Text>
+                <View style={{ flexDirection: "row-reverse", gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setDcPickerStep("time")}
+                    style={{ flex: 2, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.gold }}
+                  >
+                    <Text style={{ color: "#1A0A00", fontFamily: F.bold, fontSize: 14 }}>التالي — اختر الوقت</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setDcPickerVisible(false)}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13 }}>إلغاء</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {/* Step 2: Time picker */}
+            {dcPickerStep === "time" && (
+              <>
+                <View style={{ alignItems: "center" }}>
+                  <DateTimePicker
+                    value={dcPickerDate}
+                    mode="time"
+                    display="spinner"
+                    onChange={(_event, date) => { if (date) setDcPickerDate(date); }}
+                    style={{ width: "100%" }}
+                    themeVariant="dark"
+                    minuteInterval={5}
+                  />
+                </View>
+                {/* Preview */}
+                <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13, textAlign: "center" }}>
+                  {dcPickerDate.toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })}
+                  {" — "}
+                  {String(dcPickerDate.getHours()).padStart(2, "0")}:{String(dcPickerDate.getMinutes()).padStart(2, "0")}
+                </Text>
+                {/* Action buttons */}
+                <View style={{ flexDirection: "row-reverse", gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      if (dcPickerDate.getTime() <= Date.now()) {
+                        Alert.alert("تنبيه", "وقت الانتهاء يجب أن يكون في المستقبل. اختر وقتاً لاحقاً.");
+                        return;
+                      }
+                      const iso = dcPickerDate.toISOString();
+                      if (dcPickerContext === "edit" && dcPickerEditId != null) {
+                        try {
+                          await updateCode(dcPickerEditId, { expiresAt: iso });
+                        } catch { Alert.alert("خطأ", "تعذّر تحديث تاريخ الانتهاء"); }
+                      } else {
+                        setDcExpiresAt(new Date(dcPickerDate));
+                      }
+                      setDcPickerVisible(false);
+                    }}
+                    style={{ flex: 2, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.gold }}
+                  >
+                    <Text style={{ color: "#1A0A00", fontFamily: F.bold, fontSize: 14 }}>حفظ</Text>
+                  </TouchableOpacity>
+                  {(dcPickerContext === "edit"
+                    ? discountCodes.find((d) => d.id === dcPickerEditId)?.expiresAt
+                    : dcExpiresAt) ? (
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (dcPickerContext === "edit" && dcPickerEditId != null) {
+                          try {
+                            await updateCode(dcPickerEditId, { expiresAt: null });
+                          } catch { Alert.alert("خطأ", "تعذّر إزالة تاريخ الانتهاء"); }
+                        } else {
+                          setDcExpiresAt(null);
+                        }
+                        setDcPickerVisible(false);
+                      }}
+                      style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: "#2A0A08", borderWidth: 1, borderColor: "#E5737355" }}
+                    >
+                      <Text style={{ color: "#E57373", fontFamily: F.semi, fontSize: 13 }}>إزالة</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    onPress={() => setDcPickerStep("date")}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ color: colors.mutedForeground, fontFamily: F.semi, fontSize: 13 }}>رجوع</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </View>
       </Modal>
