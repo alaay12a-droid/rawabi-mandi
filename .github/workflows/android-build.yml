@@ -35,7 +35,12 @@ jobs:
 
       - name: Build Android AAB
         working-directory: artifacts/rawabi-menu
-        run: eas build --platform android --profile production --non-interactive --no-wait
+        run: |
+          EAS_PROJECT_ROOT="$(pwd)" \
+          EAS_NO_VCS=1 \
+          TMPDIR=/tmp \
+          EAS_BUILD_NO_EXPO_GO_WARNING=true \
+          eas build --platform android --profile production --non-interactive --no-wait
 
       - name: Print build URL
         run: |
