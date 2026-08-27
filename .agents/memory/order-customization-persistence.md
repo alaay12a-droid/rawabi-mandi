@@ -8,3 +8,9 @@ Selected size and option choices must be persisted as structured data on each or
 **Why:** Flattening a selected size into the item name allowed some checkout paths to silently discard it, leaving invoices and staff apps unable to reconstruct what the customer selected.
 
 **How to apply:** Any new order-item customization must be added to the cart variant identity, checkout payload, API validation, stored JSON, and downstream display formatter together. Keep price calculations independent from display formatting.
+
+Customer-facing cart formatting must render an unfamiliar structured size label directly rather than dropping it when it is not one of the legacy aliases.
+
+**Why:** Database-driven labels such as "نص حبة" can be authoritative even when an older formatter only recognizes values such as "نصف".
+
+**How to apply:** Use the structured selected size first for cart display. Keep legacy product-name parsing only as a compatibility path for older menu records.

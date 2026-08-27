@@ -58,6 +58,27 @@ export function resolveCartItemName(
 }
 
 /**
+ * Cart-only display formatter.
+ *
+ * Some database-driven size labels (for example "نص حبة") do not belong to
+ * the legacy chicken/meat aliases above. In the customer cart, show that
+ * selected size directly instead of trying to infer it from the product name.
+ */
+export function resolveCustomerCartItemName(
+  baseName: string,
+  customization?: CartCustomization
+): string {
+  const resolvedName = resolveCartItemName(baseName, customization);
+  const selectedSize = customization?.size?.trim();
+
+  if (!selectedSize || resolvedName !== baseName || baseName.includes(selectedSize)) {
+    return resolvedName;
+  }
+
+  return `${baseName} - ${selectedSize}`;
+}
+
+/**
  * Returns customization parts for the subtitle / order notes,
  * omitting the size when it has already been embedded in the name.
  */
