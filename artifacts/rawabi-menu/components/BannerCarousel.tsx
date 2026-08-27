@@ -42,9 +42,30 @@ export function BannerCarousel({ banners }: Props) {
     }, 4000);
   }, [active.length, scrollToIndex]);
 
-  // ── Mount: entry animation → then start auto-scroll ──────────────────────
+  // ── Entry animation → then start auto-scroll ──────────────────────────────
+  // The menu mounts this component before its async banner request completes.
+  // Re-run when the active banner count changes so a first empty render cannot
+  // leave the carousel permanently at height/opacity 0.
   useEffect(() => {
-    if (active.length === 0) return;
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    if (active.length === 0) {
+      heightAnim.stopAnimation();
+      opacityAnim.stopAnimation();
+      heightAnim.setValue(0);
+      opacityAnim.setValue(0);
+      currentRef.current = 0;
+      setCurrent(0);
+      return;
+    }
+
+    heightAnim.stopAnimation();
+    opacityAnim.stopAnimation();
+    heightAnim.setValue(0);
+    opacityAnim.setValue(0);
+    currentRef.current = 0;
+    setCurrent(0);
+    flatRef.current?.scrollToOffset({ offset: 0, animated: false });
 
     // 1. Expand height + fade in (ease-out, 450ms)
     Animated.parallel([
@@ -66,8 +87,7 @@ export function BannerCarousel({ banners }: Props) {
     });
 
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+  }, [active.length, heightAnim, opacityAnim, startAutoScroll]);
 
   if (active.length === 0) return null;
 
