@@ -1175,35 +1175,27 @@ export default function CheckoutScreen() {
           </View>
         </View>
 
-        {/* ── Payment method selector row ── */}
-        <TouchableOpacity
-          style={[styles.listCard, dyn.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => setPaymentPickerVisible(true)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.listRow, dyn.row]}>
-            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: 6 }}>
-              <Feather name="chevron-left" size={16} color={colors.mutedForeground} />
-              <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 14 }}>
-                {paymentMethod === "cash"
-                  ? (isEn ? "Cash on Delivery" : "الدفع عند الاستلام")
-                  : paymentMethod === "wallet"
-                    ? (isEn ? "Wallet" : "المحفظة الإلكترونية")
-                    : (isEn ? "Credit Card" : "بطاقة إئتمانية")}
-              </Text>
-            </View>
-            <View style={styles.rowLeft}>
-              <Feather name="credit-card" size={16} color={colors.mutedForeground} />
-              <Text style={[styles.rowLabel, dyn.lbl, { color: colors.mutedForeground, fontFamily: F.regular }]}>
-                {isEn ? "Payment Method" : "اختيار طريقة الدفع"}
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
       </ScrollView>
 
       {/* ── Bottom submit bar ── */}
       <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: bottomInset + 8 }]}>
+        <TouchableOpacity
+          style={styles.paymentSummaryRow}
+          onPress={() => setPaymentPickerVisible(true)}
+          activeOpacity={0.7}
+        >
+          <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
+          <View style={styles.paymentSummaryContent}>
+            <Text style={{ color: colors.foreground, fontFamily: F.semi, fontSize: 14 }}>
+              {paymentMethod === "moyasar"
+                ? (isEn ? "Online payment" : "دفع إلكتروني")
+                : (isEn ? "Cash" : "نقدًا")}
+            </Text>
+            <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 13 }}>
+              {isEn ? "Payment method" : "طريقة الدفع"}
+            </Text>
+          </View>
+        </TouchableOpacity>
         {cooldownSeconds > 0 ? (
           <View style={[styles.submitBtn, { backgroundColor: "#1A2A1A", alignItems: "center", justifyContent: "center", gap: 4 }]}>
             <Text style={{ color: "#4CAF50", fontFamily: F.extra, fontSize: 14, textAlign: "center" }}>
@@ -1435,74 +1427,27 @@ export default function CheckoutScreen() {
               onPress={() => { setPaymentMethod("cash"); setPaymentPickerVisible(false); }}
               activeOpacity={0.75}
             >
-              <View style={[styles.radioInner, { borderColor: paymentMethod === "cash" ? GOLD : colors.border }]}>
-                {paymentMethod === "cash" && <View style={[styles.radioDot, { backgroundColor: GOLD }]} />}
-              </View>
-              <View style={{ flex: 1, alignItems: "flex-end", gap: 2 }}>
-                <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 14 }}>
-                  {isEn ? "Cash on Delivery" : "الدفع عند الاستلام"}
-                </Text>
-                <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 12 }}>
-                  {isEn ? "Pay when your order arrives" : "ادفع عند وصول طلبك"}
-                </Text>
-              </View>
-              <Feather name="dollar-sign" size={20} color={paymentMethod === "cash" ? GOLD : colors.mutedForeground} />
+              <Text style={{ color: paymentMethod === "cash" ? GOLD : colors.mutedForeground, fontFamily: F.extra, fontSize: 18 }}>
+                {paymentMethod === "cash" ? "✓" : ""}
+              </Text>
+              <Text style={{ flex: 1, color: colors.foreground, fontFamily: F.bold, fontSize: 14, textAlign: "right" }}>
+                {isEn ? "Cash" : "نقدًا"}
+              </Text>
             </TouchableOpacity>
 
-            {/* Wallet (if available) */}
-            {walletBalance !== null && walletBalance > 0 && (
-              <TouchableOpacity
-                style={[styles.payPickerRow, { borderTopWidth: 1, borderColor: colors.border }, paymentMethod === "wallet" && { backgroundColor: GOLD + "18" }]}
-                onPress={() => { setPaymentMethod("wallet"); setPaymentPickerVisible(false); }}
-                activeOpacity={0.75}
-              >
-                <View style={[styles.radioInner, { borderColor: paymentMethod === "wallet" ? GOLD : colors.border }]}>
-                  {paymentMethod === "wallet" && <View style={[styles.radioDot, { backgroundColor: GOLD }]} />}
-                </View>
-                <View style={{ flex: 1, alignItems: "flex-end", gap: 2 }}>
-                  <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 14 }}>
-                    {isEn ? "Wallet" : "المحفظة الإلكترونية"}
-                  </Text>
-                  <Text style={{ color: walletBalance >= grandTotal ? "#22C55E" : "#E53935", fontFamily: F.regular, fontSize: 12 }}>
-                    {isEn ? `Balance: ${walletBalance} SAR` : `الرصيد: ${walletBalance} ر.س`}
-                  </Text>
-                </View>
-                <Feather name="credit-card" size={20} color={paymentMethod === "wallet" ? GOLD : colors.mutedForeground} />
-              </TouchableOpacity>
-            )}
-
-            {/* Online / Apple Pay */}
-            {paymentSettings.applePayEnabled ? (
-              <TouchableOpacity
-                style={[styles.payPickerRow, { borderTopWidth: 1, borderColor: colors.border }, paymentMethod === "moyasar" && { backgroundColor: GOLD + "18" }]}
-                onPress={() => { setPaymentMethod("moyasar"); setPaymentPickerVisible(false); }}
-                activeOpacity={0.75}
-              >
-                <View style={[styles.radioInner, { borderColor: paymentMethod === "moyasar" ? GOLD : colors.border }]}>
-                  {paymentMethod === "moyasar" && <View style={[styles.radioDot, { backgroundColor: GOLD }]} />}
-                </View>
-                <View style={{ flex: 1, alignItems: "flex-end", gap: 2 }}>
-                  <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 14 }}>Apple Pay</Text>
-                  <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 12 }}>
-                    {isEn ? "Pay easily with Apple Pay" : "ادفع بسهولة عبر Apple Pay"}
-                  </Text>
-                </View>
-                <Feather name="smartphone" size={20} color={paymentMethod === "moyasar" ? GOLD : colors.mutedForeground} />
-              </TouchableOpacity>
-            ) : (
-              <View style={[styles.payPickerRow, { borderTopWidth: 1, borderColor: colors.border, opacity: 0.4 }]}>
-                <View style={[styles.radioInner, { borderColor: colors.border }]} />
-                <View style={{ flex: 1, alignItems: "flex-end", gap: 2 }}>
-                  <Text style={{ color: colors.foreground, fontFamily: F.bold, fontSize: 14 }}>
-                    {isEn ? "Online Payment (Coming Soon)" : "دفع إلكتروني (قريباً)"}
-                  </Text>
-                  <Text style={{ color: colors.mutedForeground, fontFamily: F.regular, fontSize: 12 }}>
-                    Mada • Visa • Apple Pay • STC Pay
-                  </Text>
-                </View>
-                <Feather name="credit-card" size={20} color={colors.mutedForeground} />
-              </View>
-            )}
+            {/* Online payment */}
+            <TouchableOpacity
+              style={[styles.payPickerRow, { borderTopWidth: 1, borderColor: colors.border }, paymentMethod === "moyasar" && { backgroundColor: GOLD + "18" }]}
+              onPress={() => { setPaymentMethod("moyasar"); setPaymentPickerVisible(false); }}
+              activeOpacity={0.75}
+            >
+              <Text style={{ color: paymentMethod === "moyasar" ? GOLD : colors.mutedForeground, fontFamily: F.extra, fontSize: 18 }}>
+                {paymentMethod === "moyasar" ? "✓" : ""}
+              </Text>
+              <Text style={{ flex: 1, color: colors.foreground, fontFamily: F.bold, fontSize: 14, textAlign: "right" }}>
+                {isEn ? "Online payment" : "دفع إلكتروني"}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -1650,6 +1595,19 @@ const styles = StyleSheet.create({
   totalLine: { height: 1, marginHorizontal: 16, marginVertical: 4 },
   grandTotal: { fontSize: 20 },
 
+  paymentSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  paymentSummaryContent: {
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: 8,
+  },
   payPickerRow: {
     flexDirection: "row-reverse",
     alignItems: "center",
