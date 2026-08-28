@@ -162,14 +162,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   slide: {
-    borderRadius: 14,
+    borderRadius: 18,
     overflow: "hidden",
     height: CARD_HEIGHT,
   },
   img: {
     width: "100%",
     height: "100%",
-    borderRadius: 14,
+    borderRadius: 18,
   },
   overlay: {
     position: "absolute",
@@ -177,8 +177,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#00000088",
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
   },
   title: {
     color: "#fff",
