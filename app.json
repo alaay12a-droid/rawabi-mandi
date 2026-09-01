@@ -7,6 +7,9 @@
     },
     "android": {
       "package": "com.rawabi.almendi"
+    },
+    "ios": {
+      "bundleIdentifier": "com.rwabi.almndi"
     }
   }
 }
