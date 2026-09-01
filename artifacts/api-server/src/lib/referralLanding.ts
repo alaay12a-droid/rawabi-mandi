@@ -32,7 +32,7 @@ export function buildReferralPage(ref: string | undefined): string {
   <meta name="description" content="${metaDesc}"/>
   <meta property="og:title" content="${title}"/>
   <meta property="og:description" content="${metaDesc}"/>
-  <meta property="og:image" content="https://mandi-menu-1-640o.onrender.com/dashboard/icon.png"/>
+  <meta property="og:image" content="https://rawabi-mandi-e5rz.onrender.com/dashboard/opengraph.jpg"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet"/>
   <style>

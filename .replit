@@ -68,4 +68,5 @@ channel = "stable-25_05"
 
 [userenv.shared]
 ADMIN_USERNAME = "rawabi-mandi"
-VITE_API_BASE_URL = "https://mandi-menu-1-640o.onrender.com"
+VITE_API_BASE_URL = ""
+EXPO_PUBLIC_API_BASE_URL = "https://rawabi-mandi-e5rz.onrender.com"

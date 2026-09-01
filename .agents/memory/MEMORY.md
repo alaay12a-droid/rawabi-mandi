@@ -20,3 +20,4 @@
 - [Order customization persistence](order-customization-persistence.md) — size/options must remain structured order data; a formatted item name is compatibility display only
 - [Variant pricing authority](variant-pricing-authority.md) — configured sizes use explicit prices; legacy size-specific products never derive prices from editable sibling rows
 - [Publish branch divergence](publish-branch-divergence.md) — Replit Publish may create a local commit line that diverges from GitHub main; verify refs before blaming stale Expo/Render output
+- [Production database identity](production-database-identity.md) — the intended production dataset is Rawabi Al Mandi; “Al Bait Al Shami” indicates the wrong database

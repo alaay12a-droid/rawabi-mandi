@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-const PRODUCTION_API = "https://mandi-menu-1-640o.onrender.com";
+const PRODUCTION_API = "https://rawabi-mandi-e5rz.onrender.com";
 
 export const API_BASE =
   (process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined) ||

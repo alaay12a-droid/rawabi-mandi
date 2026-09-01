@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const RENDER_URL = "https://mandi-menu-1-640o.onrender.com";
+const RENDER_URL = "https://rawabi-mandi-e5rz.onrender.com";
 const LOCAL_API  = `${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ""}/api`;
 const RENDER_API = `${RENDER_URL}/api`;
 
@@ -560,7 +560,7 @@ export default function AuthDiagnostics() {
             <li>إذا فشل بـ 401 → بيانات الدخول خاطئة. إذا فشل بـ 502 → الخادم نائم (خطة مجانية، انتظر 30 ثانية).</li>
           </ul>
           <a
-            href="https://mandi-menu-1-640o.onrender.com/dashboard/auth-diagnostics"
+            href="https://rawabi-mandi-e5rz.onrender.com/dashboard/auth-diagnostics"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 mt-1"
