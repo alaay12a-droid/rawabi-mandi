@@ -31,7 +31,9 @@
       },
       "node": "22.15.0",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://rawabi-mandi-e5rz.onrender.com"
+        "EXPO_PUBLIC_API_BASE_URL": "https://rawabi-mandi-e5rz.onrender.com",
+        "EXPO_APPLE_TEAM_ID": "27476VAG8Z",
+        "EXPO_APPLE_TEAM_TYPE": "INDIVIDUAL"
       },
       "pnpm": "10.26.1"
     }
