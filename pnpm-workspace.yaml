@@ -36,9 +36,12 @@ minimumReleaseAgeExclude:
   - stripe-replit-sync
 
 onlyBuiltDependencies:
+  - '@firebase/util'
   - '@swc/core'
+  - core-js
   - esbuild
   - msw
+  - protobufjs
   - unrs-resolver
 
 overrides:
