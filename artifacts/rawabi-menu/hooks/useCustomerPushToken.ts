@@ -5,8 +5,185 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { apiPost } from "@/constants/api";
 
 export const TOKEN_KEY = "@rawabi_customer_push_token";
+export const PUSH_DIAGNOSTICS_KEY = "@rawabi_push_diagnostics";
 
-const PROJECT_ID = "75492716-d1d5-4871-bfd9-18c7ef3982c7";
+export const PROJECT_ID = "75492716-d1d5-4871-bfd9-18c7ef3982c7";
+
+export type PushDiagnosticStepId = "permission" | "apns" | "expo" | "post";
+export type PushDiagnosticStatus = "idle" | "pending" | "success" | "error" | "skipped";
+
+export interface PushDiagnosticStep {
+  id: PushDiagnosticStepId;
+  title: string;
+  status: PushDiagnosticStatus;
+  message: string;
+  detail?: string;
+}
+
+export interface PushDiagnosticsReport {
+  runAt: string;
+  platform: string;
+  projectId: string;
+  tokenPreview: string | null;
+  steps: PushDiagnosticStep[];
+}
+
+type PushDiagnosticListener = (report: PushDiagnosticsReport) => void;
+
+const DIAGNOSTIC_STEP_TITLES: Record<PushDiagnosticStepId, string> = {
+  permission: "صلاحية الإشعارات",
+  apns: "تسجيل APNs",
+  expo: "Expo Push Token",
+  post: "إرسال التوكن إلى الخادم",
+};
+
+export function maskPushToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  if (token.length <= 22) return `${token.slice(0, 12)}…`;
+  return `${token.slice(0, 20)}…${token.slice(-6)}`;
+}
+
+export function createPushDiagnosticsReport(): PushDiagnosticsReport {
+  return {
+    runAt: new Date().toISOString(),
+    platform: Platform.OS,
+    projectId: PROJECT_ID,
+    tokenPreview: null,
+    steps: (Object.keys(DIAGNOSTIC_STEP_TITLES) as PushDiagnosticStepId[]).map((id) => ({
+      id,
+      title: DIAGNOSTIC_STEP_TITLES[id],
+      status: "idle",
+      message: "لم يبدأ الفحص",
+    })),
+  };
+}
+
+export async function loadPushDiagnostics(): Promise<PushDiagnosticsReport | null> {
+  try {
+    const stored = await AsyncStorage.getItem(PUSH_DIAGNOSTICS_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as PushDiagnosticsReport;
+    if (!parsed || !Array.isArray(parsed.steps)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs a user-visible iOS delivery registration check.
+ * The native APNs token is read only to confirm registration and is never
+ * stored, sent to the API, or displayed without masking.
+ */
+export async function runPushDiagnostics(
+  onUpdate?: PushDiagnosticListener,
+): Promise<PushDiagnosticsReport> {
+  const report = createPushDiagnosticsReport();
+
+  const publish = async () => {
+    const snapshot: PushDiagnosticsReport = {
+      ...report,
+      steps: report.steps.map((step) => ({ ...step })),
+    };
+    await AsyncStorage.setItem(PUSH_DIAGNOSTICS_KEY, JSON.stringify(snapshot));
+    onUpdate?.(snapshot);
+  };
+
+  const setStep = async (
+    id: PushDiagnosticStepId,
+    status: PushDiagnosticStatus,
+    message: string,
+    detail?: string,
+  ) => {
+    const step = report.steps.find((item) => item.id === id);
+    if (step) Object.assign(step, { status, message, detail });
+    await publish();
+  };
+
+  const skipRemaining = async (after: PushDiagnosticStepId, message: string) => {
+    const ids = (Object.keys(DIAGNOSTIC_STEP_TITLES) as PushDiagnosticStepId[]);
+    const start = ids.indexOf(after) + 1;
+    for (const id of ids.slice(start)) {
+      await setStep(id, "skipped", message);
+    }
+  };
+
+  await publish();
+
+  await setStep("permission", "pending", "جارٍ فحص صلاحية الإشعارات");
+  let permission: Notifications.NotificationPermissionsStatus["status"];
+  try {
+    const current = await Notifications.getPermissionsAsync();
+    permission = current.status;
+    if (permission !== "granted") {
+      const requested = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowCriticalAlerts: false,
+          provideAppNotificationSettings: false,
+          allowProvisional: false,
+        },
+      });
+      permission = requested.status;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await setStep("permission", "error", "تعذر فحص أو طلب الصلاحية", message);
+    await skipRemaining("permission", "توقف الفحص بسبب فشل الصلاحية");
+    return report;
+  }
+
+  if (permission !== "granted") {
+    await setStep("permission", "error", `الصلاحية الحالية: ${permission}`, "يجب السماح بالإشعارات من إعدادات iPhone");
+    await skipRemaining("permission", "توقف الفحص لأن الصلاحية غير ممنوحة");
+    return report;
+  }
+  await setStep("permission", "success", "تم السماح بالإشعارات", `status: ${permission}`);
+
+  if (Platform.OS !== "ios") {
+    await setStep("apns", "skipped", "هذه الخطوة مخصصة لأجهزة iPhone");
+  } else {
+    await setStep("apns", "pending", "جارٍ طلب تسجيل الجهاز لدى APNs");
+    try {
+      const nativeToken = await Notifications.getDevicePushTokenAsync();
+      await setStep("apns", "success", "تم تسجيل الجهاز لدى APNs", `توكن APNs: ${maskPushToken(String(nativeToken.data)) ?? "غير متاح"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await setStep("apns", "error", "فشل تسجيل الجهاز لدى APNs", message);
+    }
+  }
+
+  await setStep("expo", "pending", "جارٍ استخراج Expo Push Token");
+  let expoToken: string;
+  try {
+    const result = await Notifications.getExpoPushTokenAsync({ projectId: PROJECT_ID });
+    expoToken = result.data;
+    report.tokenPreview = maskPushToken(expoToken);
+    await AsyncStorage.setItem(TOKEN_KEY, expoToken);
+    await setStep("expo", "success", "تم استخراج Expo Push Token", `التوكن: ${report.tokenPreview ?? "غير متاح"}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await setStep("expo", "error", "فشل استخراج Expo Push Token", message);
+    await skipRemaining("expo", "توقف الفحص لعدم توفر Expo Push Token");
+    return report;
+  }
+
+  await setStep("post", "pending", "جارٍ إرسال POST إلى Render");
+  try {
+    await apiPost("/push-tokens", {
+      token: expoToken,
+      role: "customer",
+    });
+    await setStep("post", "success", "تم قبول التوكن من Render", "POST /api/push-tokens — HTTP 2xx");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await setStep("post", "error", "فشل إرسال التوكن إلى Render", message);
+  }
+
+  return report;
+}
 
 // Must be wrapped in try/catch — throws in Expo Go and some emulators
 try {

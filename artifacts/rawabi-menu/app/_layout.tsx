@@ -244,6 +244,7 @@ function RootLayoutNav() {
         <Stack.Screen name="terms" options={{ headerShown: false }} />
         <Stack.Screen name="wallet" options={{ headerShown: false }} />
         <Stack.Screen name="app-settings" options={{ headerShown: false }} />
+        <Stack.Screen name="push-diagnostics" options={{ headerShown: false }} />
       </Stack>
     </>
   );

@@ -253,6 +253,11 @@ export default function MoreScreen() {
       label: t("terms"),
       action: () => router.push("/terms"),
     },
+    {
+      icon: "activity",
+      label: isEn ? "Push Notifications Diagnostics" : "تشخيص الإشعارات",
+      action: () => router.push("/push-diagnostics" as any),
+    },
     ...(user
       ? [
           { icon: "log-out", label: t("clearData"), action: handleLogout, danger: true } as MenuItem,
