@@ -3,7 +3,7 @@
     "name": "روابي المندي",
     "slug": "rawabi-menu",
     "owner": "021837ala",
-    "version": "1.3.4",
+    "version": "1.4.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rawabi-menu",
@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.rwabi.almndi",
-      "buildNumber": "8",
+      "buildNumber": "9",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لتحديد عنوان التوصيل وتوفير خدمة أفضل",
         "ITSAppUsesNonExemptEncryption": false,
