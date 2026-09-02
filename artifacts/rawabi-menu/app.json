@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.rwabi.almndi",
-      "buildNumber": "9",
+      "buildNumber": "10",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لتحديد عنوان التوصيل وتوفير خدمة أفضل",
         "ITSAppUsesNonExemptEncryption": false,
