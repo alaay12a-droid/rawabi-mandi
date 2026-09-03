@@ -17,6 +17,29 @@ function haversineKmServer(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function parseOrderCoordinates(address: string | null): { lat: number; lng: number } | null {
+  if (!address) return null;
+
+  let decoded = address;
+  try {
+    decoded = decodeURIComponent(address);
+  } catch {
+    // Keep the original address if it contains malformed URL encoding.
+  }
+
+  const match =
+    decoded.match(/[?&](?:q|query|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i) ??
+    decoded.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return null;
+  }
+  return { lat, lng };
+}
+
 const cleanPhone = (p: string) => p.replace(/[^\d+]/g, "").trim();
 
 const driverSchema = z.object({
@@ -543,6 +566,8 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   const AUTO_RESTAURANT_LAT = 28.410769;
   const AUTO_RESTAURANT_LNG = 36.532353;
   const GPS_STALE_MS = 15 * 60 * 1000; // 15 minutes
+  const AUTO_BATCH_MAX_DISTANCE_KM = 1; // Delivery destinations must be within 1 km.
+  const AUTO_BATCH_MAX_ACTIVE_ORDERS = 2; // Never auto-stack more than two active orders.
   const cutoff = new Date(Date.now() - GPS_STALE_MS);
 
   // 1. All online+active drivers (GPS no longer mandatory — drivers without
@@ -561,10 +586,11 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   }
 
   // 2. Drivers who are already handling an ACTIVE order.
-  //    Join with ordersTable so stale "assigned" records for done/cancelled orders
-  //    do NOT block the driver from being picked up again.
   const activeAssigns = await db
-    .select({ driverId: orderDriverAssignmentsTable.driverId })
+    .select({
+      driverId: orderDriverAssignmentsTable.driverId,
+      customerAddress: ordersTable.customerAddress,
+    })
     .from(orderDriverAssignmentsTable)
     .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
     .where(and(
@@ -574,10 +600,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
 
   const busyIds = new Set(activeAssigns.map(a => a.driverId));
 
-  // 3. Keep only free drivers, sorted by distance from restaurant (closest first).
-  //    Drivers without a recent GPS fix are eligible too — they go to the end.
-  const eligible = onlineDrivers
-    .filter(d => !busyIds.has(d.id))
+  const rankedOnlineDrivers = onlineDrivers
     .map(d => {
       const hasGps = d.lastLat != null && d.lastLng != null &&
         d.lastLocationAt != null && d.lastLocationAt >= cutoff;
@@ -585,24 +608,22 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         ? haversineKmServer(AUTO_RESTAURANT_LAT, AUTO_RESTAURANT_LNG, d.lastLat!, d.lastLng!)
         : 9999; // No GPS — put at end, still eligible
       return { ...d, distKm };
-    })
+    });
+
+  // 3. Free drivers always keep priority over busy drivers, even when a busy
+  // driver's current destination is close to the new order.
+  const freeCandidates = rankedOnlineDrivers
+    .filter(d => !busyIds.has(d.id))
     .sort((a, b) => a.distKm - b.distKm);
 
-  if (eligible.length === 0) {
-    res.json({ ok: false, error: "لا يوجد مندوب متاح حاليًا للتعيين التلقائي." });
-    return;
-  }
-
-  // 4. Try each candidate in order. Advisory locks make the availability check
-  // and insert atomic at the database level, so concurrent auto-assign requests
-  // cannot both select the same free driver.
-  let assignedDriver: typeof eligible[0] | null = null;
+  type Candidate = typeof rankedOnlineDrivers[number];
+  let assignedDriver: Candidate | null = null;
   let existingDriver: { id: number; name: string } | null = null;
-  for (const candidate of eligible) {
-    const result = await db.transaction(async (tx) => {
-      // Lock the order first so two simultaneous requests for the same order
-      // cannot overwrite each other's assignment. The lock is released when
-      // this transaction ends.
+
+  const tryCandidate = async (candidate: Candidate, allowBatching: boolean) => {
+    return db.transaction(async (tx) => {
+      // Lock the order first so simultaneous requests for the same order cannot
+      // create or replace more than one assignment.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(19870401, ${orderId})`);
 
       const [existing] = await tx
@@ -622,12 +643,9 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         };
       }
 
-      // Then lock the candidate driver so two different orders cannot pass the
-      // availability check for the same driver at the same time.
+      // Serialize every availability/batching decision for this driver.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(19870402, ${candidate.id})`);
 
-      // Re-check inside transaction so an offline or inactive driver can never
-      // be selected from a stale candidate list.
       const [stillEligible] = await tx
         .select({ id: deliveryDriversTable.id })
         .from(deliveryDriversTable)
@@ -639,20 +657,52 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         .limit(1);
       if (!stillEligible) return null;
 
-      // Re-check inside the driver lock. Done/cancelled orders no longer keep
-      // a driver busy, while manual assignments remain active assignments and
-      // therefore correctly block future automatic assignments.
-      const [conflict] = await tx
-        .select({ id: orderDriverAssignmentsTable.id })
+      const currentActive = await tx
+        .select({
+          orderId: orderDriverAssignmentsTable.orderId,
+          customerAddress: ordersTable.customerAddress,
+        })
         .from(orderDriverAssignmentsTable)
         .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
         .where(and(
           eq(orderDriverAssignmentsTable.driverId, candidate.id),
           inArray(orderDriverAssignmentsTable.status, ["assigned", "picked_up"]),
           notInArray(ordersTable.status, ["done", "cancelled"]),
-        ))
-        .limit(1);
-      if (conflict) return null; // Driver was just taken — try next
+        ));
+
+      if (!allowBatching && currentActive.length > 0) return null;
+
+      if (allowBatching) {
+        if (
+          currentActive.length === 0 ||
+          currentActive.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS
+        ) {
+          return null;
+        }
+
+        const [targetOrder] = await tx
+          .select({ customerAddress: ordersTable.customerAddress })
+          .from(ordersTable)
+          .where(eq(ordersTable.id, orderId))
+          .limit(1);
+        const targetCoordinates = parseOrderCoordinates(targetOrder?.customerAddress ?? null);
+        if (!targetCoordinates) return null;
+
+        const activeCoordinates = currentActive.map(active =>
+          parseOrderCoordinates(active.customerAddress)
+        );
+        if (activeCoordinates.some(coordinates => coordinates == null)) return null;
+
+        const allDestinationsClose = activeCoordinates.every(coordinates =>
+          haversineKmServer(
+            targetCoordinates.lat,
+            targetCoordinates.lng,
+            coordinates!.lat,
+            coordinates!.lng,
+          ) <= AUTO_BATCH_MAX_DISTANCE_KM
+        );
+        if (!allDestinationsClose) return null;
+      }
 
       const [assignment] = await tx
         .insert(orderDriverAssignmentsTable)
@@ -665,7 +715,11 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         driverName: candidate.name,
       };
     }).catch(() => null);
+  };
 
+  // 4. Preserve the normal behavior: try every currently free driver first.
+  for (const candidate of freeCandidates) {
+    const result = await tryCandidate(candidate, false);
     if (!result) continue;
     if (!result.assignmentCreated) {
       existingDriver = { id: result.driverId, name: result.driverName };
@@ -673,6 +727,82 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
     }
     assignedDriver = candidate;
     break;
+  }
+
+  // 5. Only when no free driver could be assigned, consider a conservative
+  // two-order batch. Refresh active assignments after the free-driver attempts
+  // so concurrent requests cannot make a decision from an old busy/free state.
+  if (!assignedDriver && !existingDriver) {
+    const [targetOrder] = await db
+      .select({ customerAddress: ordersTable.customerAddress })
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId))
+      .limit(1);
+    const targetCoordinates = parseOrderCoordinates(targetOrder?.customerAddress ?? null);
+
+    if (targetCoordinates) {
+      const currentActiveAssigns = await db
+        .select({
+          driverId: orderDriverAssignmentsTable.driverId,
+          customerAddress: ordersTable.customerAddress,
+        })
+        .from(orderDriverAssignmentsTable)
+        .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
+        .where(and(
+          inArray(orderDriverAssignmentsTable.status, ["assigned", "picked_up"]),
+          notInArray(ordersTable.status, ["done", "cancelled"]),
+        ));
+
+      const activeByDriver = new Map<number, { lat: number; lng: number }[] | null>();
+      for (const active of currentActiveAssigns) {
+        const coordinates = parseOrderCoordinates(active.customerAddress);
+        const previous = activeByDriver.get(active.driverId);
+        if (!coordinates || previous === null) {
+          activeByDriver.set(active.driverId, null);
+        } else {
+          activeByDriver.set(active.driverId, [...(previous ?? []), coordinates]);
+        }
+      }
+
+      const batchCandidates = rankedOnlineDrivers
+        .map(driver => {
+          const activeCoordinates = activeByDriver.get(driver.id);
+          if (
+            !activeCoordinates ||
+            activeCoordinates.length === 0 ||
+            activeCoordinates.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS
+          ) {
+            return null;
+          }
+
+          const destinationDistanceKm = Math.max(...activeCoordinates.map(coordinates =>
+            haversineKmServer(
+              targetCoordinates.lat,
+              targetCoordinates.lng,
+              coordinates.lat,
+              coordinates.lng,
+            )
+          ));
+          if (destinationDistanceKm > AUTO_BATCH_MAX_DISTANCE_KM) return null;
+          return { ...driver, destinationDistanceKm };
+        })
+        .filter((driver): driver is Candidate & { destinationDistanceKm: number } => driver != null)
+        .sort((a, b) =>
+          a.destinationDistanceKm - b.destinationDistanceKm ||
+          a.distKm - b.distKm
+        );
+
+      for (const candidate of batchCandidates) {
+        const result = await tryCandidate(candidate, true);
+        if (!result) continue;
+        if (!result.assignmentCreated) {
+          existingDriver = { id: result.driverId, name: result.driverName };
+          break;
+        }
+        assignedDriver = candidate;
+        break;
+      }
+    }
   }
 
   if (existingDriver) {
@@ -690,13 +820,13 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
     return;
   }
 
-  // 5. Move order to out_for_delivery
+  // 6. Move order to out_for_delivery
   await db
     .update(ordersTable)
     .set({ status: "out_for_delivery" })
     .where(and(eq(ordersTable.id, orderId), ne(ordersTable.status, "done"), ne(ordersTable.status, "cancelled")));
 
-  // 6. Fetch order info for notifications
+  // 7. Fetch order info for notifications
   const [order] = await db
     .select({ customerPushToken: ordersTable.customerPushToken, dailyNumber: ordersTable.dailyNumber, customerName: ordersTable.customerName })
     .from(ordersTable)
@@ -705,7 +835,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
 
   res.json({ ok: true, driverId: assignedDriver.id, driverName: assignedDriver.name });
 
-  // 7. Push to customer
+  // 8. Push to customer
   if (order?.customerPushToken) {
     sendPushToToken(order.customerPushToken, {
       title: "🛵 تم تعيين مندوب لطلبك",
@@ -716,7 +846,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
     }).catch(() => {});
   }
 
-  // 8. Push to driver (failure does NOT cancel the assignment)
+  // 9. Push to driver (failure does NOT cancel the assignment)
   sendPushToDriver(assignedDriver.id, {
     title: "🛵 طلب جديد!",
     body: `طلب #${order?.dailyNumber ?? orderId}${order?.customerName ? ` — ${order.customerName}` : ""}`,
