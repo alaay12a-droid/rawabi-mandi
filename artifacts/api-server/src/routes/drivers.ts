@@ -567,6 +567,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   const AUTO_RESTAURANT_LNG = 36.532353;
   const GPS_STALE_MS = 15 * 60 * 1000; // 15 minutes
   const AUTO_BATCH_MAX_DISTANCE_KM = 1; // Delivery destinations must be within 1 km.
+  const AUTO_BATCH_MAX_RESTAURANT_DISTANCE_KM = 0.5; // Batch only before the driver leaves the restaurant area.
   const AUTO_BATCH_MAX_ACTIVE_ORDERS = 2; // Never auto-stack more than two active orders.
   const cutoff = new Date(Date.now() - GPS_STALE_MS);
 
@@ -602,12 +603,12 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
 
   const rankedOnlineDrivers = onlineDrivers
     .map(d => {
-      const hasGps = d.lastLat != null && d.lastLng != null &&
+      const hasFreshGps = d.lastLat != null && d.lastLng != null &&
         d.lastLocationAt != null && d.lastLocationAt >= cutoff;
-      const distKm = hasGps
+      const distKm = hasFreshGps
         ? haversineKmServer(AUTO_RESTAURANT_LAT, AUTO_RESTAURANT_LNG, d.lastLat!, d.lastLng!)
         : 9999; // No GPS — put at end, still eligible
-      return { ...d, distKm };
+      return { ...d, distKm, hasFreshGps };
     });
 
   // 3. Free drivers always keep priority over busy drivers, even when a busy
@@ -660,6 +661,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       const currentActive = await tx
         .select({
           orderId: orderDriverAssignmentsTable.orderId,
+          assignmentStatus: orderDriverAssignmentsTable.status,
           customerAddress: ordersTable.customerAddress,
         })
         .from(orderDriverAssignmentsTable)
@@ -675,10 +677,34 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       if (allowBatching) {
         if (
           currentActive.length === 0 ||
-          currentActive.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS
+          currentActive.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS ||
+          currentActive.some(active => active.assignmentStatus !== "assigned")
         ) {
           return null;
         }
+
+        const [currentDriver] = await tx
+          .select({
+            lastLat: deliveryDriversTable.lastLat,
+            lastLng: deliveryDriversTable.lastLng,
+            lastLocationAt: deliveryDriversTable.lastLocationAt,
+          })
+          .from(deliveryDriversTable)
+          .where(eq(deliveryDriversTable.id, candidate.id))
+          .limit(1);
+        const hasFreshDriverGps = currentDriver?.lastLat != null &&
+          currentDriver.lastLng != null &&
+          currentDriver.lastLocationAt != null &&
+          currentDriver.lastLocationAt >= cutoff;
+        if (!hasFreshDriverGps) return null;
+
+        const driverRestaurantDistanceKm = haversineKmServer(
+          AUTO_RESTAURANT_LAT,
+          AUTO_RESTAURANT_LNG,
+          currentDriver.lastLat!,
+          currentDriver.lastLng!,
+        );
+        if (driverRestaurantDistanceKm > AUTO_BATCH_MAX_RESTAURANT_DISTANCE_KM) return null;
 
         const [targetOrder] = await tx
           .select({ customerAddress: ordersTable.customerAddress })
@@ -744,6 +770,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       const currentActiveAssigns = await db
         .select({
           driverId: orderDriverAssignmentsTable.driverId,
+          assignmentStatus: orderDriverAssignmentsTable.status,
           customerAddress: ordersTable.customerAddress,
         })
         .from(orderDriverAssignmentsTable)
@@ -757,7 +784,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       for (const active of currentActiveAssigns) {
         const coordinates = parseOrderCoordinates(active.customerAddress);
         const previous = activeByDriver.get(active.driverId);
-        if (!coordinates || previous === null) {
+        if (active.assignmentStatus !== "assigned" || !coordinates || previous === null) {
           activeByDriver.set(active.driverId, null);
         } else {
           activeByDriver.set(active.driverId, [...(previous ?? []), coordinates]);
@@ -770,7 +797,9 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
           if (
             !activeCoordinates ||
             activeCoordinates.length === 0 ||
-            activeCoordinates.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS
+            activeCoordinates.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS ||
+            !driver.hasFreshGps ||
+            driver.distKm > AUTO_BATCH_MAX_RESTAURANT_DISTANCE_KM
           ) {
             return null;
           }
