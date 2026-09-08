@@ -10,7 +10,8 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:chicken-sizes": "node --experimental-strip-types scripts/test-explicit-chicken-sizes.mts",
-    "test:branch-resolver": "tsx scripts/test-branch-resolver.mts"
+    "test:branch-resolver": "tsx scripts/test-branch-resolver.mts",
+    "test:order-branch-assignment": "tsx scripts/test-order-branch-assignment.mts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",

@@ -92,8 +92,9 @@ export function haversineKm(from: LatLng, to: LatLng): number {
 
 export function validateResolveCoordinates(latValue: unknown, lngValue: unknown): CoordinateValidation {
   const parse = (value: unknown, name: "lat" | "lng"): number | string => {
-    if (typeof value !== "string" || value.trim() === "") return `${name} is required`;
-    const number = Number(value);
+    if (typeof value !== "string" && typeof value !== "number") return `${name} is required`;
+    if (typeof value === "string" && value.trim() === "") return `${name} is required`;
+    const number = typeof value === "number" ? value : Number(value);
     if (!Number.isFinite(number)) return `${name} must be a finite number`;
     return number;
   };

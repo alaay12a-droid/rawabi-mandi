@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, ordersTable, menuItemsTable, appSettingsTable, orderDriverAssignmentsTable, deliveryDriversTable } from "@workspace/db";
+import { db, ordersTable, menuItemsTable, appSettingsTable, orderDriverAssignmentsTable, deliveryDriversTable, branchesTable, deliveryZonesTable } from "@workspace/db";
 import { eq, desc, gte, lt, count, and, ne, inArray, isNotNull, sql } from "drizzle-orm";
 import { sendPushToCashiers, sendPushToToken, sendPushToDriver } from "../lib/sendPushNotification.js";
 import { sendSms } from "../lib/sendSms.js";
@@ -7,6 +7,12 @@ import { z } from "zod";
 import { processReferralReward } from "./referrals.js";
 import { isValidExplicitChickenSizeSelection } from "../lib/explicitChickenSizes.js";
 import { requireDashboardUser, resolveOptionalDashboardActor, type DashboardActor } from "./dashboard-auth.js";
+import { resolveNearestBranch } from "../lib/branchResolver.js";
+import {
+  mapOrderBranchAssignment,
+  resolveDeliveryCoordinates,
+  type OrderBranchAssignment,
+} from "../lib/orderBranchAssignment.js";
 
 const router = Router();
 
@@ -126,6 +132,10 @@ const createOrderSchema = z.object({
   customerPushToken: z.string().nullable().optional(),
   branchId:   z.number().int().nullable().optional(),
   branchName: z.string().nullable().optional(),
+  // Kept unknown at the shared schema boundary so irrelevant coordinate fields
+  // never alter pickup validation. Delivery validates them below.
+  deliveryLat: z.unknown().optional(),
+  deliveryLng: z.unknown().optional(),
 });
 
 router.post("/orders", async (req, res) => {
@@ -135,6 +145,54 @@ router.post("/orders", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  let branchAssignment: OrderBranchAssignment;
+
+  if (data.orderType === "delivery") {
+    const coordinates = resolveDeliveryCoordinates(data);
+    if (!coordinates.ok) {
+      res.status(400).json({
+        error: "إحداثيات موقع التوصيل غير صحيحة. يرجى تحديد الموقع على الخريطة.",
+        code: "INVALID_DELIVERY_COORDINATES",
+      });
+      return;
+    }
+
+    const [branches, zones] = await Promise.all([
+      db.select({
+        id: branchesTable.id,
+        name: branchesTable.name,
+        active: branchesTable.active,
+        deliveryEnabled: branchesTable.deliveryEnabled,
+        lat: branchesTable.lat,
+        lng: branchesTable.lng,
+      }).from(branchesTable),
+      db.select({
+        id: deliveryZonesTable.id,
+        branchId: deliveryZonesTable.branchId,
+        enabled: deliveryZonesTable.enabled,
+        sortOrder: deliveryZonesTable.sortOrder,
+        polygon: deliveryZonesTable.polygon,
+      }).from(deliveryZonesTable),
+    ]);
+    const resolution = resolveNearestBranch(coordinates.point, branches, zones);
+    if (resolution.selectedBranchId === null
+      || resolution.selectedBranchName === null
+      || resolution.matchingZoneId === null
+      || resolution.distanceKm === null) {
+      res.status(422).json({
+        error: "لا يوجد فرع مؤهل للتوصيل إلى هذا الموقع.",
+        code: "NO_ELIGIBLE_BRANCH",
+        resolverOutcome: resolution.outcome,
+      });
+      return;
+    }
+    branchAssignment = mapOrderBranchAssignment(data.orderType, data, {
+      point: coordinates.point,
+      resolution,
+    });
+  } else {
+    branchAssignment = mapOrderBranchAssignment(data.orderType, data, null);
+  }
 
   // Configured variants are authoritative. Reject stale/tampered cart snapshots
   // instead of silently charging a different amount than the customer saw.
@@ -266,8 +324,7 @@ router.post("/orders", async (req, res) => {
     notes: data.notes ?? null,
     status: "pending",
     customerPushToken: data.customerPushToken ?? null,
-    branchId:   data.branchId   ?? null,
-    branchName: data.branchName ?? null,
+    ...branchAssignment,
   }).returning();
 
   for (const [itemId, requested] of requestedByItemId) {
