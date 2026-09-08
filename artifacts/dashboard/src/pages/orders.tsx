@@ -188,12 +188,13 @@ h1{text-align:center;font-size:18px;font-weight:800;color:#8B4513;margin-bottom:
 .items-table{width:100%;table-layout:fixed;border:1px solid #697176;border-collapse:collapse;border-spacing:0;font-size:11.5px;direction:rtl}
 .items-table col.item-name-col{width:48%}.items-table col.unit-price-col{width:20%}.items-table col.quantity-col{width:12%}.items-table col.total-col{width:20%}
 .items-table th,.items-table td{border:1px solid #697176;padding:7px 4px;vertical-align:middle;word-break:normal;overflow-wrap:normal}
-.items-table thead th{background:#263238;color:#fff;font-size:10.5px;font-weight:800;padding:8px 2px;text-align:center;line-height:1.25;white-space:nowrap}
+.items-table thead th{background:#263238;color:#fff;font-size:10.5px;font-weight:800;padding:8px 2px;text-align:center;line-height:1.25;white-space:nowrap;word-break:keep-all;overflow-wrap:normal}
+.unit-price-heading span{display:block;white-space:nowrap}
 .items-table tbody tr{height:40px}.items-table tbody tr:nth-child(even){background:#fafafa}
-.numeric-cell{text-align:center;direction:ltr;white-space:nowrap}.item-name-cell{text-align:right;line-height:1.35;overflow:hidden}.item-name-cell>span{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.numeric-cell{text-align:center;direction:ltr;white-space:nowrap}.item-name-cell{text-align:right;line-height:1.35;overflow:hidden;word-break:normal;overflow-wrap:normal}.item-name-cell>span{display:-webkit-box;max-height:2.7em;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;word-break:normal;overflow-wrap:normal}
 .item-modifiers{display:block;margin-top:2px;color:#666;font-size:9.5px;font-weight:400;line-height:1.3;white-space:normal;word-break:normal;overflow-wrap:normal}
 hr{border:none;border-top:1px dashed #bbb;margin:8px 0}
-.total{font-size:16px;font-weight:800;text-align:left}@media print{body{padding:5mm}}</style></head><body>
+.total{font-size:16px;font-weight:800;text-align:left}@media print{body{padding:5mm}.items-table{width:72mm;max-width:72mm;margin-inline:-5mm}.items-table col.item-name-col{width:32mm}.items-table col.unit-price-col{width:17mm}.items-table col.quantity-col{width:9mm}.items-table col.total-col{width:14mm}}</style></head><body>
 <h1>روابي المندي للمذاق فن وأصول</h1>
 <div class="sub">تبوك، الروضة، 47711 — المملكة العربية السعودية</div>
 <div class="sub">الرقم الضريبي: 302282730200003</div>
@@ -207,7 +208,7 @@ ${order.customerAddress ? `<p style="font-size:13px;margin-bottom:6px"><strong>�
 <hr/>
 <table class="items-table">
 <colgroup><col class="item-name-col"/><col class="unit-price-col"/><col class="quantity-col"/><col class="total-col"/></colgroup>
-<thead><tr><th>اسم الصنف</th><th>سعر القطعة</th><th>العدد</th><th>المجموع</th></tr></thead>
+<thead><tr><th>اسم الصنف</th><th class="unit-price-heading"><span>سعر</span><span>القطعة</span></th><th>العدد</th><th>المجموع</th></tr></thead>
 <tbody>${itemsRows}</tbody>
 </table>
 <hr/>
