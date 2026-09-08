@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
   resolveNearestBranch,
+  isBranchOpen,
+  validateWeeklyOperatingHours,
   validateResolveCoordinates,
   type ResolverBranch,
   type ResolverZone,
@@ -19,6 +21,11 @@ const branch = (id: number, overrides: Partial<ResolverBranch> = {}): ResolverBr
 const zone = (id: number, branchId: number | null, overrides: Partial<ResolverZone> = {}): ResolverZone => ({
   id, branchId, enabled: true, sortOrder: 0, polygon, ...overrides,
 });
+const hours = (open: string | null, close?: string) => ({
+  sun: open ? { open, close: close! } : "closed", mon: "closed", tue: "closed", wed: "closed",
+  thu: "closed", fri: "closed", sat: "closed",
+});
+const riyadh = (utc: string) => new Date(utc);
 
 // One eligible branch.
 let result = resolveNearestBranch(point, [branch(1)], [zone(10, 1)]);
@@ -45,6 +52,32 @@ assert.equal(result.outcome, "no_eligible_branch_coordinates");
 assert.deepEqual(result.exclusions, [{ branchId: 1, reason: "missing_coordinates" }]);
 result = resolveNearestBranch({ lat: 5, lng: 5 }, [branch(1)], [zone(10, 1)]);
 assert.equal(result.outcome, "outside_delivery_zones");
+
+// Null hours remain unrestricted; strict hours handle open, closed and overnight
+// periods in Asia/Riyadh (UTC+3).
+assert.equal(isBranchOpen(null, riyadh("2024-01-07T09:00:00Z")), true);
+assert.equal(isBranchOpen(hours("09:00", "17:00"), riyadh("2024-01-07T09:00:00Z")), true);
+assert.equal(isBranchOpen(hours("09:00", "17:00"), riyadh("2024-01-07T18:00:00Z")), false);
+const overnight = { ...hours(null), sat: { open: "22:00", close: "02:00" } };
+assert.equal(isBranchOpen(overnight, riyadh("2024-01-06T19:30:00Z")), true);
+assert.equal(isBranchOpen(overnight, riyadh("2024-01-06T21:30:00Z")), true);
+assert.equal(validateWeeklyOperatingHours({ ...hours("09:00", "09:00") }).ok, false);
+assert.equal(validateWeeklyOperatingHours({ ...hours(null), sun: null }).ok, false);
+
+// Global false always wins; branch false excludes only that branch; absent
+// overrides preserve availability. Capacity has no effect when null.
+result = resolveNearestBranch(point, [
+  branch(1, { productAvailability: { a: false }, globalProductAvailability: { a: true } }),
+  branch(2, { globalProductAvailability: { a: true }, deliveryCapacity: null }),
+], [zone(10, 1), zone(20, 2)]);
+assert.equal(result.selectedBranchId, 2);
+result = resolveNearestBranch(point, [branch(1, { globalProductAvailability: { a: false } })], [zone(10, 1)]);
+assert.equal(result.selectedBranchId, null);
+result = resolveNearestBranch(point, [
+  branch(1, { deliveryCapacity: 2, activeDeliveryOrderCount: 1 }),
+  branch(2, { deliveryCapacity: 1, activeDeliveryOrderCount: 1 }),
+], [zone(10, 1), zone(20, 2)]);
+assert.equal(result.selectedBranchId, 1);
 
 // Branch 1 is eligible while Branch 2 is inactive; it remains unmodified.
 const branch2 = branch(2, { active: false });

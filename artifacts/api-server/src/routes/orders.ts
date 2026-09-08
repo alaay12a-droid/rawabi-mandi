@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, ordersTable, menuItemsTable, appSettingsTable, orderDriverAssignmentsTable, deliveryDriversTable, branchesTable, deliveryZonesTable } from "@workspace/db";
+import { db, ordersTable, menuItemsTable, appSettingsTable, orderDriverAssignmentsTable, deliveryDriversTable, branchesTable, deliveryZonesTable, branchProductAvailabilityTable } from "@workspace/db";
 import { eq, desc, gte, lt, count, and, ne, inArray, isNotNull, sql } from "drizzle-orm";
 import { sendPushToCashiers, sendPushToToken, sendPushToDriver } from "../lib/sendPushNotification.js";
 import { sendSms } from "../lib/sendSms.js";
@@ -97,6 +97,14 @@ function resolveConfiguredUnitPrice(
   return priceInHalalas / 100;
 }
 
+function hasPriceValidationError(menuItem: typeof menuItemsTable.$inferSelect, item: z.infer<typeof createOrderSchema>["items"][number]): boolean {
+  const configuredUnitPrice = resolveConfiguredUnitPrice(menuItem, item.customization);
+  const submittedSnapshot = item.customization?.unitPrice;
+  return (configuredUnitPrice != null && Number.isNaN(configuredUnitPrice))
+    || (configuredUnitPrice != null && !Number.isNaN(configuredUnitPrice) && Math.abs(configuredUnitPrice - item.price) > 0.001)
+    || (submittedSnapshot != null && Math.abs(submittedSnapshot - item.price) > 0.001);
+}
+
 const createOrderSchema = z.object({
   customerName: z.string().min(1),
   customerPhone: z.string().min(1),
@@ -146,6 +154,7 @@ router.post("/orders", async (req, res) => {
   }
   const data = parsed.data;
   let branchAssignment: OrderBranchAssignment;
+  let deliveryPoint: { lat: number; lng: number } | null = null;
 
   if (data.orderType === "delivery") {
     const coordinates = resolveDeliveryCoordinates(data);
@@ -157,63 +166,23 @@ router.post("/orders", async (req, res) => {
       return;
     }
 
-    const [branches, zones] = await Promise.all([
-      db.select({
-        id: branchesTable.id,
-        name: branchesTable.name,
-        active: branchesTable.active,
-        deliveryEnabled: branchesTable.deliveryEnabled,
-        lat: branchesTable.lat,
-        lng: branchesTable.lng,
-      }).from(branchesTable),
-      db.select({
-        id: deliveryZonesTable.id,
-        branchId: deliveryZonesTable.branchId,
-        enabled: deliveryZonesTable.enabled,
-        sortOrder: deliveryZonesTable.sortOrder,
-        polygon: deliveryZonesTable.polygon,
-      }).from(deliveryZonesTable),
-    ]);
-    const resolution = resolveNearestBranch(coordinates.point, branches, zones);
-    if (resolution.selectedBranchId === null
-      || resolution.selectedBranchName === null
-      || resolution.matchingZoneId === null
-      || resolution.distanceKm === null) {
-      res.status(422).json({
-        error: "لا يوجد فرع مؤهل للتوصيل إلى هذا الموقع.",
-        code: "NO_ELIGIBLE_BRANCH",
-        resolverOutcome: resolution.outcome,
-      });
-      return;
-    }
-    branchAssignment = mapOrderBranchAssignment(data.orderType, data, {
-      point: coordinates.point,
-      resolution,
-    });
+    deliveryPoint = coordinates.point;
+    // Final selection happens with the order insert in one transaction below.
+    branchAssignment = mapOrderBranchAssignment("pickup", data, null);
   } else {
     branchAssignment = mapOrderBranchAssignment(data.orderType, data, null);
   }
 
   // Configured variants are authoritative. Reject stale/tampered cart snapshots
   // instead of silently charging a different amount than the customer saw.
-  for (const item of data.items) {
+  for (const item of data.orderType === "pickup" ? data.items : []) {
     const [menuItem] = await db
       .select()
       .from(menuItemsTable)
       .where(eq(menuItemsTable.itemId, item.id));
     if (!menuItem) continue;
 
-    const configuredUnitPrice = resolveConfiguredUnitPrice(menuItem, item.customization);
-    const submittedSnapshot = item.customization?.unitPrice;
-    const hasInvalidSelection = configuredUnitPrice != null && Number.isNaN(configuredUnitPrice);
-    const hasStalePrice =
-      configuredUnitPrice != null &&
-      !Number.isNaN(configuredUnitPrice) &&
-      Math.abs(configuredUnitPrice - item.price) > 0.001;
-    const hasInconsistentSnapshot =
-      submittedSnapshot != null && Math.abs(submittedSnapshot - item.price) > 0.001;
-
-    if (hasInvalidSelection || hasStalePrice || hasInconsistentSnapshot) {
+    if (hasPriceValidationError(menuItem, item)) {
       res.status(409).json({
         error: "تم تحديث سعر أو خيارات أحد الأصناف. حدّث السلة ثم حاول مرة أخرى.",
         code: "PRICE_CHANGED",
@@ -293,8 +262,10 @@ router.post("/orders", async (req, res) => {
   }
 
   // ── Validate stock before inserting ────────────────────────────────────────
-  for (const [itemId, requested] of requestedByItemId) {
+  const globalProductAvailability: Record<string, boolean> = {};
+  for (const [itemId, requested] of data.orderType === "pickup" ? requestedByItemId : []) {
     const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, itemId));
+    globalProductAvailability[itemId] = menuItem?.available === true;
     if (menuItem && menuItem.stock !== null) {
       if (menuItem.stock < requested.quantity) {
         res.status(409).json({
@@ -309,7 +280,7 @@ router.post("/orders", async (req, res) => {
     }
   }
 
-  const [order] = await db.insert(ordersTable).values({
+  const orderValues: typeof ordersTable.$inferInsert = {
     dailyNumber,
     customerName: data.customerName,
     customerPhone: data.customerPhone,
@@ -324,10 +295,125 @@ router.post("/orders", async (req, res) => {
     notes: data.notes ?? null,
     status: "pending",
     customerPushToken: data.customerPushToken ?? null,
-    ...branchAssignment,
-  }).returning();
+  };
+  let order: typeof ordersTable.$inferSelect;
+  if (data.orderType === "delivery" && deliveryPoint) {
+    const transactionResult = await db.transaction(async (tx) => {
+      const [baseBranches, baseZones] = await Promise.all([tx.select({
+        id: branchesTable.id, name: branchesTable.name, active: branchesTable.active,
+        deliveryEnabled: branchesTable.deliveryEnabled, lat: branchesTable.lat, lng: branchesTable.lng,
+      }).from(branchesTable), tx.select({
+        id: deliveryZonesTable.id, branchId: deliveryZonesTable.branchId, enabled: deliveryZonesTable.enabled,
+        sortOrder: deliveryZonesTable.sortOrder, polygon: deliveryZonesTable.polygon,
+      }).from(deliveryZonesTable)]);
+      // This base pass finds only active, delivery-enabled, coordinate-bearing,
+      // zone-matching candidates.  It intentionally ignores mutable eligibility
+      // settings until their per-branch lock has been acquired.
+      const lockableIds = resolveNearestBranch(deliveryPoint!, baseBranches.map((branch) => ({
+        ...branch, weeklyOperatingHours: null, deliveryCapacity: null,
+      })), baseZones).eligibleBranches.map((branch) => branch.id).sort((a, b) => a - b);
+      for (const branchId of lockableIds) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(19870410, ${branchId})`);
+      }
+      const itemIds = [...requestedByItemId.keys()].sort();
+      // Lock menu rows before re-reading them.  The subsequent Drizzle query
+      // observes the locked authoritative configuration and stock snapshots.
+      if (itemIds.length > 0) {
+        const itemIdSql = sql.join(itemIds.map((itemId) => sql`${itemId}`), sql`, `);
+        const lockResult = await tx.execute(sql`SELECT item_id FROM menu_items WHERE item_id IN (${itemIdSql}) ORDER BY item_id FOR UPDATE`);
+        const lockedIds = new Set((lockResult.rows as Array<{ item_id: string }>).map((row) => row.item_id));
+        if (itemIds.some((itemId) => !lockedIds.has(itemId))) {
+          return { order: null, resolution: null, error: { code: "MISSING_ITEM" } };
+        }
+      }
+      const [branches, zones, menuItems, overrides, activeOrders] = await Promise.all([
+        tx.select({
+          id: branchesTable.id, name: branchesTable.name, active: branchesTable.active,
+          deliveryEnabled: branchesTable.deliveryEnabled, lat: branchesTable.lat, lng: branchesTable.lng,
+          weeklyOperatingHours: branchesTable.weeklyOperatingHours, deliveryCapacity: branchesTable.deliveryCapacity,
+        }).from(branchesTable).where(
+          lockableIds.length > 0 ? inArray(branchesTable.id, lockableIds) : sql`false`,
+        ),
+        tx.select({ id: deliveryZonesTable.id, branchId: deliveryZonesTable.branchId, enabled: deliveryZonesTable.enabled, sortOrder: deliveryZonesTable.sortOrder, polygon: deliveryZonesTable.polygon })
+          .from(deliveryZonesTable)
+          .where(lockableIds.length > 0 ? inArray(deliveryZonesTable.branchId, lockableIds) : sql`false`),
+        tx.select().from(menuItemsTable).where(inArray(menuItemsTable.itemId, itemIds)),
+        tx.select({ branchId: branchProductAvailabilityTable.branchId, itemId: branchProductAvailabilityTable.itemId, available: branchProductAvailabilityTable.available })
+          .from(branchProductAvailabilityTable).where(inArray(branchProductAvailabilityTable.itemId, itemIds)),
+        tx.select({ branchId: ordersTable.branchId }).from(ordersTable).where(and(
+          eq(ordersTable.orderType, "delivery"),
+          inArray(ordersTable.status, ["pending", "preparing", "ready", "out_for_delivery"] as const),
+          isNotNull(ordersTable.branchId),
+        )),
+      ]);
+      const lockedMenuItems = new Map(menuItems.map((menuItem) => [menuItem.itemId, menuItem]));
+      const transactionalGlobalAvailability: Record<string, boolean> = {};
+      for (const item of data.items) {
+        const menuItem = lockedMenuItems.get(item.id);
+        transactionalGlobalAvailability[item.id] = menuItem?.available === true;
+        if (menuItem && hasPriceValidationError(menuItem, item)) {
+          return { order: null, resolution: null, error: { code: "PRICE_CHANGED", itemId: item.id } };
+        }
+      }
+      for (const [itemId, requested] of requestedByItemId) {
+        const menuItem = lockedMenuItems.get(itemId);
+        if (menuItem?.stock !== null && menuItem !== undefined && menuItem.stock < requested.quantity) {
+          return { order: null, resolution: null, error: { code: "STOCK", itemId, available: menuItem.stock, name: requested.name } };
+        }
+      }
+      const overridesByBranch = new Map<number, Record<string, boolean>>();
+      for (const override of overrides) {
+        const current = overridesByBranch.get(override.branchId) ?? {};
+        current[override.itemId] = override.available;
+        overridesByBranch.set(override.branchId, current);
+      }
+      const activeCounts = new Map<number, number>();
+      for (const activeOrder of activeOrders) {
+        if (activeOrder.branchId !== null) activeCounts.set(activeOrder.branchId, (activeCounts.get(activeOrder.branchId) ?? 0) + 1);
+      }
+      const resolution = resolveNearestBranch(deliveryPoint!, branches.map((branch) => ({
+        ...branch, productAvailability: overridesByBranch.get(branch.id),
+        globalProductAvailability: transactionalGlobalAvailability, activeDeliveryOrderCount: activeCounts.get(branch.id) ?? 0,
+      })), zones);
+      if (resolution.selectedBranchId === null || resolution.selectedBranchName === null || resolution.matchingZoneId === null || resolution.distanceKm === null) {
+        return { order: null, resolution, error: null };
+      }
+      const assignment = mapOrderBranchAssignment("delivery", data, { point: deliveryPoint!, resolution });
+      const [inserted] = await tx.insert(ordersTable).values({ ...orderValues, ...assignment }).returning();
+      for (const [itemId, requested] of requestedByItemId) {
+        const menuItem = lockedMenuItems.get(itemId)!;
+        if (menuItem.stock !== null) {
+          const newStock = menuItem.stock - requested.quantity;
+          await tx.update(menuItemsTable).set({ stock: newStock, available: newStock > 0 }).where(eq(menuItemsTable.itemId, itemId));
+        }
+      }
+      return { order: inserted, resolution, error: null };
+    });
+    if (!transactionResult.order) {
+      if (transactionResult.error?.code === "PRICE_CHANGED") {
+        res.status(409).json({ error: "تم تحديث سعر أو خيارات أحد الأصناف. حدّث السلة ثم حاول مرة أخرى.", code: "PRICE_CHANGED", itemId: transactionResult.error.itemId });
+        return;
+      }
+      if (transactionResult.error?.code === "STOCK") {
+        res.status(409).json({
+          error: transactionResult.error.available === 0 ? `نفد المخزون: ${transactionResult.error.name}` : `الكمية المتاحة من "${transactionResult.error.name}" هي ${transactionResult.error.available} فقط`,
+          itemId: transactionResult.error.itemId, available: transactionResult.error.available,
+        });
+        return;
+      }
+      if (transactionResult.error?.code === "MISSING_ITEM") {
+        res.status(422).json({ error: "لا يوجد فرع مؤهل للتوصيل إلى هذا الموقع.", code: "NO_ELIGIBLE_BRANCH", resolverOutcome: "outside_delivery_zones" });
+        return;
+      }
+      res.status(422).json({ error: "لا يوجد فرع مؤهل للتوصيل إلى هذا الموقع.", code: "NO_ELIGIBLE_BRANCH", resolverOutcome: transactionResult.resolution?.outcome ?? "outside_delivery_zones" });
+      return;
+    }
+    order = transactionResult.order;
+  } else {
+    [order] = await db.insert(ordersTable).values({ ...orderValues, ...branchAssignment }).returning();
+  }
 
-  for (const [itemId, requested] of requestedByItemId) {
+  for (const [itemId, requested] of data.orderType === "pickup" ? requestedByItemId : []) {
     const [menuItem] = await db.select().from(menuItemsTable).where(eq(menuItemsTable.itemId, itemId));
     if (menuItem && menuItem.stock !== null) {
       const newStock = Math.max(0, menuItem.stock - requested.quantity);
@@ -358,7 +444,7 @@ router.post("/orders", async (req, res) => {
     title: `🔔 طلب جديد #${dailyNumber}`,
     body: `${data.customerName} — ${itemsSummary}`,
     sound: "default",
-    data: { orderId: order.id },
+    data: { orderId: String(order.id) },
   });
 });
 
@@ -451,11 +537,41 @@ router.patch("/orders/:id/status", requireDashboardUser, async (req, res) => {
     return;
   }
   const branchFilter = branchOrderFilter(res.locals.dashboardActor as DashboardActor);
-  const [order] = await db
-    .update(ordersTable)
-    .set({ status: status as "pending" | "preparing" | "ready" | "done" | "cancelled" })
-    .where(and(eq(ordersTable.id, id), branchFilter))
-    .returning();
+  const statusResult = await db.transaction(async (tx) => {
+    let [current] = await tx.select().from(ordersTable).where(and(eq(ordersTable.id, id), branchFilter)).limit(1);
+    if (!current) return { order: null, capacityFull: false };
+    if (current.orderType === "delivery" && current.branchId !== null) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(19870410, ${current.branchId})`);
+      [current] = await tx.select().from(ordersTable).where(and(eq(ordersTable.id, id), branchOrderFilter(res.locals.dashboardActor as DashboardActor))).limit(1);
+      if (!current) return { order: null, capacityFull: false };
+    }
+    const terminalStatuses = new Set(["done", "cancelled"]);
+    const activeStatuses = new Set(["pending", "preparing", "ready"]);
+    if (current.orderType === "delivery" && current.branchId !== null
+      && terminalStatuses.has(current.status) && activeStatuses.has(status)) {
+      const [branch] = await tx.select({ deliveryCapacity: branchesTable.deliveryCapacity })
+        .from(branchesTable).where(eq(branchesTable.id, current.branchId)).limit(1);
+      if (branch?.deliveryCapacity != null) {
+        const [{ value }] = await tx.select({ value: count() }).from(ordersTable).where(and(
+          eq(ordersTable.orderType, "delivery"),
+          eq(ordersTable.branchId, current.branchId),
+          inArray(ordersTable.status, ["pending", "preparing", "ready", "out_for_delivery"] as const),
+          ne(ordersTable.id, current.id),
+        ));
+        if (Number(value) >= branch.deliveryCapacity) return { order: null, capacityFull: true };
+      }
+    }
+    const [updated] = await tx.update(ordersTable)
+      .set({ status: status as "pending" | "preparing" | "ready" | "done" | "cancelled" })
+      .where(and(eq(ordersTable.id, id), branchOrderFilter(res.locals.dashboardActor as DashboardActor)))
+      .returning();
+    return { order: updated ?? null, capacityFull: false };
+  });
+  if (statusResult.capacityFull) {
+    res.status(409).json({ error: "الفرع وصل إلى الحد الأقصى لطلبات التوصيل النشطة.", code: "BRANCH_DELIVERY_CAPACITY_REACHED" });
+    return;
+  }
+  const order = statusResult.order;
   if (!order) {
     res.status(404).json({ error: "الطلب غير موجود" });
     return;

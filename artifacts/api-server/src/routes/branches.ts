@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { db, branchesTable } from "@workspace/db";
-import { eq, desc, inArray } from "drizzle-orm";
+import { db, branchesTable, branchProductAvailabilityTable, menuItemsTable, deliveryZonesTable } from "@workspace/db";
+import { eq, desc, inArray, and, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireDashboardAdmin, resolveOptionalDashboardActor } from "./dashboard-auth";
+import { validateWeeklyOperatingHours } from "../lib/branchResolver";
 
 const router = Router();
 
@@ -16,7 +17,17 @@ const branchSchema = z.object({
   lng:     z.number().min(-180).max(180).nullable().optional(),
   deliveryEnabled: z.boolean().optional(),
   pickupEnabled: z.boolean().optional(),
+  weeklyOperatingHours: z.unknown().nullable().optional(),
+  deliveryCapacity: z.number().int().positive().nullable().optional(),
 });
+
+function validateBranchPayload(payload: Partial<z.infer<typeof branchSchema>>): string | null {
+  if (payload.weeklyOperatingHours !== undefined) {
+    const result = validateWeeklyOperatingHours(payload.weeklyOperatingHours);
+    if (!result.ok) return result.error;
+  }
+  return null;
+}
 
 // ── GET /branches ─────────────────────────────────────────────────────────────
 router.get("/branches", async (req, res) => {
@@ -33,6 +44,8 @@ router.get("/branches", async (req, res) => {
 router.post("/branches", requireDashboardAdmin, async (req, res) => {
   const parsed = branchSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+  const hoursError = validateBranchPayload(parsed.data);
+  if (hoursError) { res.status(400).json({ error: hoursError }); return; }
   const [branch] = await db
     .insert(branchesTable)
     .values({
@@ -45,6 +58,8 @@ router.post("/branches", requireDashboardAdmin, async (req, res) => {
       lng:     parsed.data.lng     ?? null,
       deliveryEnabled: parsed.data.deliveryEnabled ?? true,
       pickupEnabled: parsed.data.pickupEnabled ?? true,
+      weeklyOperatingHours: parsed.data.weeklyOperatingHours ?? null,
+      deliveryCapacity: parsed.data.deliveryCapacity ?? null,
     })
     .returning();
   res.json(branch);
@@ -56,8 +71,11 @@ router.put("/branches/:id", requireDashboardAdmin, async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   const parsed = branchSchema.partial().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
-  const [branch] = await db
-    .update(branchesTable)
+  const hoursError = validateBranchPayload(parsed.data);
+  if (hoursError) { res.status(400).json({ error: hoursError }); return; }
+  const branch = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(19870410, ${id})`);
+    const [updated] = await tx.update(branchesTable)
     .set({
       ...(parsed.data.name    !== undefined ? { name:    parsed.data.name }    : {}),
       ...(parsed.data.address !== undefined ? { address: parsed.data.address } : {}),
@@ -68,18 +86,67 @@ router.put("/branches/:id", requireDashboardAdmin, async (req, res) => {
       ...(parsed.data.lng     !== undefined ? { lng:     parsed.data.lng }     : {}),
       ...(parsed.data.deliveryEnabled !== undefined ? { deliveryEnabled: parsed.data.deliveryEnabled } : {}),
       ...(parsed.data.pickupEnabled !== undefined ? { pickupEnabled: parsed.data.pickupEnabled } : {}),
+      ...(parsed.data.weeklyOperatingHours !== undefined ? { weeklyOperatingHours: parsed.data.weeklyOperatingHours } : {}),
+      ...(parsed.data.deliveryCapacity !== undefined ? { deliveryCapacity: parsed.data.deliveryCapacity } : {}),
     })
     .where(eq(branchesTable.id, id))
-    .returning();
+      .returning();
+    return updated;
+  });
   if (!branch) { res.status(404).json({ error: "فرع غير موجود" }); return; }
   res.json(branch);
+});
+
+const availabilitySchema = z.object({ itemId: z.string().min(1), available: z.boolean().nullable() });
+
+router.get("/branches/:id/product-availability", requireDashboardAdmin, async (req, res) => {
+  const branchId = Number(req.params.id);
+  if (!Number.isInteger(branchId) || branchId <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable).where(eq(branchesTable.id, branchId));
+  if (!branch) { res.status(404).json({ error: "فرع غير موجود" }); return; }
+  const rows = await db.select({
+    itemId: menuItemsTable.itemId, name: menuItemsTable.name, globalAvailable: menuItemsTable.available,
+    override: branchProductAvailabilityTable.available,
+  }).from(menuItemsTable).leftJoin(branchProductAvailabilityTable, and(
+    eq(branchProductAvailabilityTable.itemId, menuItemsTable.itemId), eq(branchProductAvailabilityTable.branchId, branchId),
+  ));
+  res.json(rows.map((row) => ({ ...row, override: row.override ?? null, effective: row.globalAvailable && row.override !== false })));
+});
+
+router.put("/branches/:id/product-availability", requireDashboardAdmin, async (req, res) => {
+  const branchId = Number(req.params.id);
+  if (!Number.isInteger(branchId) || branchId <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const parsed = availabilitySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+  const [branchRows, itemRows] = await Promise.all([
+    db.select({ id: branchesTable.id }).from(branchesTable).where(eq(branchesTable.id, branchId)),
+    db.select({ itemId: menuItemsTable.itemId }).from(menuItemsTable).where(eq(menuItemsTable.itemId, parsed.data.itemId)),
+  ]);
+  const branch = branchRows[0];
+  const item = itemRows[0];
+  if (!branch) { res.status(404).json({ error: "فرع غير موجود" }); return; }
+  if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(19870410, ${branchId})`);
+    if (parsed.data.available === null) {
+      await tx.delete(branchProductAvailabilityTable).where(and(eq(branchProductAvailabilityTable.branchId, branchId), eq(branchProductAvailabilityTable.itemId, parsed.data.itemId)));
+    } else {
+      await tx.insert(branchProductAvailabilityTable).values({ branchId, itemId: parsed.data.itemId, available: parsed.data.available })
+        .onConflictDoUpdate({ target: [branchProductAvailabilityTable.branchId, branchProductAvailabilityTable.itemId], set: { available: parsed.data.available } });
+    }
+  });
+  res.json({ ok: true });
 });
 
 // ── DELETE /branches/:id ──────────────────────────────────────────────────────
 router.delete("/branches/:id", requireDashboardAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
-  await db.delete(branchesTable).where(eq(branchesTable.id, id));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(19870410, ${id})`);
+    await tx.delete(deliveryZonesTable).where(eq(deliveryZonesTable.branchId, id));
+    await tx.delete(branchesTable).where(eq(branchesTable.id, id));
+  });
   res.json({ ok: true });
 });
 

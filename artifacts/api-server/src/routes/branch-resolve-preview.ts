@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, branchesTable, deliveryZonesTable } from "@workspace/db";
-import { asc, inArray } from "drizzle-orm";
+import { db, branchesTable, deliveryZonesTable, ordersTable } from "@workspace/db";
+import { asc, inArray, and, eq, isNotNull } from "drizzle-orm";
 import {
   resolveNearestBranch,
   validateResolveCoordinates,
@@ -23,7 +23,7 @@ router.get("/branches/resolve-preview", requireDashboardUser, async (req, res) =
   }
 
   const branchFilter = actor.role === "admin" ? undefined : inArray(branchesTable.id, actor.branchIds);
-  const [branches, zones] = await Promise.all([
+  const [branches, zones, activeOrders] = await Promise.all([
     db.select({
       id: branchesTable.id,
       name: branchesTable.name,
@@ -31,6 +31,8 @@ router.get("/branches/resolve-preview", requireDashboardUser, async (req, res) =
       deliveryEnabled: branchesTable.deliveryEnabled,
       lat: branchesTable.lat,
       lng: branchesTable.lng,
+      weeklyOperatingHours: branchesTable.weeklyOperatingHours,
+      deliveryCapacity: branchesTable.deliveryCapacity,
     }).from(branchesTable).where(branchFilter),
     db.select({
       id: deliveryZonesTable.id,
@@ -41,9 +43,17 @@ router.get("/branches/resolve-preview", requireDashboardUser, async (req, res) =
     }).from(deliveryZonesTable)
       .where(actor.role === "admin" ? undefined : inArray(deliveryZonesTable.branchId, actor.branchIds))
       .orderBy(asc(deliveryZonesTable.sortOrder), asc(deliveryZonesTable.id)),
+    db.select({ branchId: ordersTable.branchId }).from(ordersTable).where(and(
+      eq(ordersTable.orderType, "delivery"),
+      inArray(ordersTable.status, ["pending", "preparing", "ready", "out_for_delivery"] as const),
+      isNotNull(ordersTable.branchId),
+    )),
   ]);
-
-  res.json(resolveNearestBranch(validated.point, branches, zones));
+  const counts = new Map<number, number>();
+  for (const order of activeOrders) if (order.branchId !== null) counts.set(order.branchId, (counts.get(order.branchId) ?? 0) + 1);
+  res.json(resolveNearestBranch(validated.point, branches.map((branch) => ({
+    ...branch, activeDeliveryOrderCount: counts.get(branch.id) ?? 0,
+  })), zones));
 });
 
 export default router;

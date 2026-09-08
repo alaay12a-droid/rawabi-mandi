@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, jsonb, timestamp, boolean, pgEnum, real } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, jsonb, timestamp, boolean, pgEnum, real, uniqueIndex } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 export const orderStatusEnum = pgEnum("order_status", [
@@ -324,9 +324,19 @@ export const branchesTable = pgTable("branches", {
   lng:       real("lng"),
   deliveryEnabled: boolean("delivery_enabled").notNull().default(true),
   pickupEnabled: boolean("pickup_enabled").notNull().default(true),
+  weeklyOperatingHours: jsonb("weekly_operating_hours"),
+  deliveryCapacity: integer("delivery_capacity"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 export type Branch = typeof branchesTable.$inferSelect;
+
+export const branchProductAvailabilityTable = pgTable("branch_product_availability", {
+  id: serial("id").primaryKey(),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  itemId: text("item_id").notNull().references(() => menuItemsTable.itemId, { onDelete: "cascade" }),
+  available: boolean("available").notNull(),
+}, (table) => [uniqueIndex("branch_product_availability_branch_item_unique").on(table.branchId, table.itemId)]);
+export type BranchProductAvailability = typeof branchProductAvailabilityTable.$inferSelect;
 
 export const driverBranchMembershipsTable = pgTable("driver_branch_memberships", {
   id: serial("id").primaryKey(),

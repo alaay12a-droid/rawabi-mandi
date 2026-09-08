@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { db, deliveryZonesTable, branchesTable } from "@workspace/db";
-import { eq, asc, and, inArray, isNotNull } from "drizzle-orm";
+import { eq, asc, and, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireDashboardUser } from "./dashboard-auth";
 import { pointInPolygon, type LatLng } from "../lib/geo";
 
 const router = Router();
+const BRANCH_ELIGIBILITY_LOCK_NAMESPACE = 19870410;
+const UNASSIGNED_ZONE_LOCK = 0;
 
 router.get("/delivery-zones", requireDashboardUser, async (_req, res) => {
   const actor = res.locals.dashboardActor;
@@ -80,19 +82,24 @@ router.post("/delivery-zones", requireDashboardUser, async (req, res) => {
   if (actor.role !== "admin" && (branchId == null || !actor.branchIds.includes(branchId))) {
     res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
   }
-  if (branchId !== undefined && branchId !== null) {
-    const [branch] = await db
-      .select({ id: branchesTable.id })
-      .from(branchesTable)
-      .where(eq(branchesTable.id, branchId))
-      .limit(1);
-    if (!branch) { res.status(400).json({ error: "الفرع غير موجود" }); return; }
+  const outcome = await db.transaction(async (tx) => {
+    const lockKey = branchId ?? UNASSIGNED_ZONE_LOCK;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${BRANCH_ELIGIBILITY_LOCK_NAMESPACE}, ${lockKey})`);
+    if (branchId != null) {
+      const [branch] = await tx.select({ id: branchesTable.id }).from(branchesTable)
+        .where(eq(branchesTable.id, branchId)).limit(1);
+      if (!branch) return { kind: "branch_not_found" } as const;
+    }
+    const [inserted] = await tx.insert(deliveryZonesTable)
+      .values({ name, polygon, deliveryFee, minOrder, enabled, sortOrder, branchId: branchId ?? null })
+      .returning();
+    return { kind: "ok", zone: inserted } as const;
+  });
+  if (outcome.kind === "branch_not_found") {
+    res.status(400).json({ error: "الفرع غير موجود" });
+    return;
   }
-  const [zone] = await db
-    .insert(deliveryZonesTable)
-    .values({ name, polygon, deliveryFee, minOrder, enabled, sortOrder, branchId: branchId ?? null })
-    .returning();
-  res.status(201).json(zone);
+  res.status(201).json(outcome.zone);
 });
 
 router.put("/delivery-zones/:id", requireDashboardUser, async (req, res) => {
@@ -106,43 +113,77 @@ router.put("/delivery-zones/:id", requireDashboardUser, async (req, res) => {
     return;
   }
   const actor = res.locals.dashboardActor;
-  const [existing] = await db.select({ branchId: deliveryZonesTable.branchId })
-    .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
-  if (!existing) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
-  if (actor.role !== "admin" && (existing.branchId == null || !actor.branchIds.includes(existing.branchId))) {
-    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  let outcome:
+    | { kind: "ok"; zone: typeof deliveryZonesTable.$inferSelect }
+    | { kind: "not_found" }
+    | { kind: "forbidden" }
+    | { kind: "branch_not_found" }
+    | { kind: "retry" }
+    = { kind: "retry" };
+  for (let attempt = 0; attempt < 3 && outcome.kind === "retry"; attempt += 1) {
+    outcome = await db.transaction(async (tx) => {
+      const [initial] = await tx.select({ branchId: deliveryZonesTable.branchId })
+        .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+      if (!initial) return { kind: "not_found" } as const;
+      const destination = parsed.data.branchId;
+      const ownerships = destination === undefined ? [initial.branchId] : [initial.branchId, destination];
+      const lockIds = [...new Set(ownerships.map((branchId) => branchId ?? UNASSIGNED_ZONE_LOCK))].sort((a, b) => a - b);
+      for (const branchId of lockIds) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${BRANCH_ELIGIBILITY_LOCK_NAMESPACE}, ${branchId})`);
+      }
+      const [stable] = await tx.select({ branchId: deliveryZonesTable.branchId })
+        .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+      if (!stable) return { kind: "not_found" } as const;
+      if (stable.branchId !== initial.branchId) return { kind: "retry" } as const;
+      if (actor.role !== "admin" && (stable.branchId == null || !actor.branchIds.includes(stable.branchId))) {
+        return { kind: "forbidden" } as const;
+      }
+      if (actor.role !== "admin" && (destination === null || (destination !== undefined && !actor.branchIds.includes(destination)))) {
+        return { kind: "forbidden" } as const;
+      }
+      if (destination != null) {
+        const [branch] = await tx.select({ id: branchesTable.id }).from(branchesTable)
+          .where(eq(branchesTable.id, destination)).limit(1);
+        if (!branch) return { kind: "branch_not_found" } as const;
+      }
+      const [updated] = await tx.update(deliveryZonesTable).set(parsed.data)
+        .where(eq(deliveryZonesTable.id, id)).returning();
+      return updated ? { kind: "ok", zone: updated } as const : { kind: "not_found" } as const;
+    });
   }
-  if (actor.role !== "admin" && (parsed.data.branchId === null || (parsed.data.branchId !== undefined && !actor.branchIds.includes(parsed.data.branchId)))) {
-    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
-  }
-  if (parsed.data.branchId !== undefined && parsed.data.branchId !== null) {
-    const [branch] = await db
-      .select({ id: branchesTable.id })
-      .from(branchesTable)
-      .where(eq(branchesTable.id, parsed.data.branchId))
-      .limit(1);
-    if (!branch) { res.status(400).json({ error: "الفرع غير موجود" }); return; }
-  }
-  const [zone] = await db
-    .update(deliveryZonesTable)
-    .set(parsed.data)
-    .where(eq(deliveryZonesTable.id, id))
-    .returning();
-  if (!zone) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
-  res.json(zone);
+  if (outcome.kind === "forbidden") { res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return; }
+  if (outcome.kind === "branch_not_found") { res.status(400).json({ error: "الفرع غير موجود" }); return; }
+  if (outcome.kind === "not_found") { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
+  if (outcome.kind === "retry") { res.status(409).json({ error: "تم تحديث المنطقة، حاول مرة أخرى" }); return; }
+  res.json(outcome.zone);
 });
 
 router.delete("/delivery-zones/:id", requireDashboardUser, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   const actor = res.locals.dashboardActor;
-  const [existing] = await db.select({ branchId: deliveryZonesTable.branchId })
-    .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
-  if (!existing) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
-  if (actor.role !== "admin" && (existing.branchId == null || !actor.branchIds.includes(existing.branchId))) {
-    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  let outcome: { kind: "ok" | "not_found" | "forbidden" | "retry" } = { kind: "retry" };
+  for (let attempt = 0; attempt < 3 && outcome.kind === "retry"; attempt += 1) {
+    outcome = await db.transaction(async (tx) => {
+      const [initial] = await tx.select({ branchId: deliveryZonesTable.branchId })
+        .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+      if (!initial) return { kind: "not_found" } as const;
+      const lockKey = initial.branchId ?? UNASSIGNED_ZONE_LOCK;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${BRANCH_ELIGIBILITY_LOCK_NAMESPACE}, ${lockKey})`);
+      const [stable] = await tx.select({ branchId: deliveryZonesTable.branchId })
+        .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+      if (!stable) return { kind: "not_found" } as const;
+      if (stable.branchId !== initial.branchId) return { kind: "retry" } as const;
+      if (actor.role !== "admin" && (stable.branchId == null || !actor.branchIds.includes(stable.branchId))) {
+        return { kind: "forbidden" } as const;
+      }
+      await tx.delete(deliveryZonesTable).where(eq(deliveryZonesTable.id, id));
+      return { kind: "ok" } as const;
+    });
   }
-  await db.delete(deliveryZonesTable).where(eq(deliveryZonesTable.id, id));
+  if (outcome.kind === "forbidden") { res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return; }
+  if (outcome.kind === "not_found") { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
+  if (outcome.kind === "retry") { res.status(409).json({ error: "تم تحديث المنطقة، حاول مرة أخرى" }); return; }
   res.json({ ok: true });
 });
 

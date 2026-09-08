@@ -7,6 +7,13 @@ export interface ResolverBranch {
   deliveryEnabled: boolean;
   lat: number | null;
   lng: number | null;
+  weeklyOperatingHours?: unknown;
+  deliveryCapacity?: number | null;
+  activeDeliveryOrderCount?: number;
+  /** Per requested product override; omitted means no override. */
+  productAvailability?: Record<string, boolean | undefined>;
+  /** Authoritative menu availability for requested products. */
+  globalProductAvailability?: Record<string, boolean | undefined>;
 }
 
 export interface ResolverZone {
@@ -23,7 +30,10 @@ export type BranchExclusionReason =
   | "inactive_branch"
   | "delivery_disabled"
   | "missing_coordinates"
-  | "no_matching_zone";
+  | "closed"
+  | "no_matching_zone"
+  | "product_unavailable"
+  | "at_capacity";
 
 export interface BranchExclusion {
   branchId: number;
@@ -56,6 +66,65 @@ export interface BranchResolution {
 export type CoordinateValidation =
   | { ok: true; point: LatLng }
   | { ok: false; error: string };
+
+const weekDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+type WeekDay = typeof weekDays[number];
+export type WeeklyOperatingHours = Record<WeekDay, "closed" | { open: string; close: string }>;
+
+function validTime(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hour, minute] = value.split(":").map(Number);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+}
+
+/** Validates the stored shape; null means operating hours are unrestricted. */
+export function validateWeeklyOperatingHours(value: unknown): { ok: true; value: WeeklyOperatingHours | null } | { ok: false; error: string } {
+  if (value === null) return { ok: true, value: null };
+  if (typeof value !== "object" || Array.isArray(value) || value === null) {
+    return { ok: false, error: "weeklyOperatingHours must be null or a sun-sat map" };
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length !== weekDays.length || weekDays.some((day) => !(day in record))) {
+    return { ok: false, error: "weeklyOperatingHours must contain exactly sun, mon, tue, wed, thu, fri, sat" };
+  }
+  for (const day of weekDays) {
+    const hours = record[day];
+    if (hours === "closed") continue;
+    if (typeof hours !== "object" || Array.isArray(hours) || hours === null
+      || Object.keys(hours as object).length !== 2
+      || !validTime((hours as { open?: unknown }).open)
+      || !validTime((hours as { close?: unknown }).close)
+      || (hours as { open: string }).open === (hours as { close: string }).close) {
+      return { ok: false, error: `${day} must be closed or an open/close HH:mm interval with different times` };
+    }
+  }
+  return { ok: true, value: value as WeeklyOperatingHours };
+}
+
+function riyadhDayAndMinutes(now: Date): { day: WeekDay; previousDay: WeekDay; minutes: number } {
+  const pieces = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Riyadh", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const get = (type: string) => pieces.find((piece) => piece.type === type)?.value ?? "";
+  const order: Record<string, WeekDay> = { Sun: "sun", Mon: "mon", Tue: "tue", Wed: "wed", Thu: "thu", Fri: "fri", Sat: "sat" };
+  const day = order[get("weekday")];
+  const index = weekDays.indexOf(day);
+  return { day, previousDay: weekDays[(index + 6) % 7], minutes: Number(get("hour")) * 60 + Number(get("minute")) };
+}
+
+export function isBranchOpen(weeklyOperatingHours: unknown, now = new Date()): boolean {
+  const validated = validateWeeklyOperatingHours(weeklyOperatingHours);
+  if (!validated.ok) return false;
+  if (validated.value === null) return true;
+  const { day, previousDay, minutes } = riyadhDayAndMinutes(now);
+  const openNow = (entry: WeeklyOperatingHours[WeekDay], allowOvernight: boolean) => {
+    if (entry === "closed") return false;
+    const [oh, om] = entry.open.split(":").map(Number);
+    const [ch, cm] = entry.close.split(":").map(Number);
+    const open = oh * 60 + om, close = ch * 60 + cm;
+    return open < close ? !allowOvernight && minutes >= open && minutes < close
+      : allowOvernight ? minutes < close : minutes >= open;
+  };
+  return openNow(validated.value[day], false) || openNow(validated.value[previousDay], true);
+}
 
 function isValidPolygon(polygon: unknown): polygon is LatLng[] {
   return Array.isArray(polygon)
@@ -111,6 +180,7 @@ export function resolveNearestBranch(
   point: LatLng,
   branches: readonly ResolverBranch[],
   zones: readonly ResolverZone[],
+  now = new Date(),
 ): BranchResolution {
   const zonesByBranch = new Map<number, ValidResolverZone[]>();
   for (const zone of zones) {
@@ -154,11 +224,26 @@ export function resolveNearestBranch(
       exclusions.push({ branchId: branch.id, reason: "missing_coordinates" });
       continue;
     }
+    if (!isBranchOpen(branch.weeklyOperatingHours ?? null, now)) {
+      exclusions.push({ branchId: branch.id, reason: "closed" });
+      continue;
+    }
     hasCoordinateEligibleBranch = true;
     const matchingZone = (zonesByBranch.get(branch.id) ?? [])
       .find((zone) => pointInPolygon(point, zone.polygon));
     if (!matchingZone) {
       exclusions.push({ branchId: branch.id, reason: "no_matching_zone" });
+      continue;
+    }
+    const globalAvailable = Object.values(branch.globalProductAvailability ?? {}).every((available) => available === true);
+    const branchAvailable = Object.values(branch.productAvailability ?? {}).every((available) => available !== false);
+    if (!globalAvailable || !branchAvailable) {
+      exclusions.push({ branchId: branch.id, reason: "product_unavailable" });
+      continue;
+    }
+    if (branch.deliveryCapacity !== null && branch.deliveryCapacity !== undefined
+      && (branch.activeDeliveryOrderCount ?? 0) >= branch.deliveryCapacity) {
+      exclusions.push({ branchId: branch.id, reason: "at_capacity" });
       continue;
     }
     const rawDistanceKm = haversineKm(point, { lat: branchLat, lng: branchLng });
