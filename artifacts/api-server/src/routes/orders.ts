@@ -1,13 +1,20 @@
 import { Router } from "express";
 import { db, ordersTable, menuItemsTable, appSettingsTable, orderDriverAssignmentsTable, deliveryDriversTable } from "@workspace/db";
-import { eq, desc, gte, lt, count, and, ne } from "drizzle-orm";
+import { eq, desc, gte, lt, count, and, ne, inArray, isNotNull, sql } from "drizzle-orm";
 import { sendPushToCashiers, sendPushToToken, sendPushToDriver } from "../lib/sendPushNotification.js";
 import { sendSms } from "../lib/sendSms.js";
 import { z } from "zod";
 import { processReferralReward } from "./referrals.js";
 import { isValidExplicitChickenSizeSelection } from "../lib/explicitChickenSizes.js";
+import { requireDashboardUser, resolveOptionalDashboardActor, type DashboardActor } from "./dashboard-auth.js";
 
 const router = Router();
+
+function branchOrderFilter(actor: DashboardActor | null) {
+  if (!actor || actor.role === "admin") return undefined;
+  if (actor.branchIds.length === 0) return sql`false`;
+  return and(isNotNull(ordersTable.branchId), inArray(ordersTable.branchId, actor.branchIds));
+}
 
 type OrderCustomization = z.infer<typeof createOrderSchema>["items"][number]["customization"];
 
@@ -299,12 +306,14 @@ router.post("/orders", async (req, res) => {
 });
 
 // ── GET /orders/assignments  (batch — all active assignments) ─────────────────
-router.get("/orders/assignments", async (_req, res) => {
+router.get("/orders/assignments", requireDashboardUser, async (_req, res) => {
+  const branchFilter = branchOrderFilter(res.locals.dashboardActor as DashboardActor);
   const rows = await db
     .select({ assignment: orderDriverAssignmentsTable, driver: deliveryDriversTable })
     .from(orderDriverAssignmentsTable)
     .leftJoin(deliveryDriversTable, eq(orderDriverAssignmentsTable.driverId, deliveryDriversTable.id))
-    .where(ne(orderDriverAssignmentsTable.status, "delivered"));
+    .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
+    .where(and(ne(orderDriverAssignmentsTable.status, "delivered"), branchFilter));
 
   const result: Record<number, { driverId: number; driverName: string; status: string }> = {};
   for (const r of rows) {
@@ -320,15 +329,18 @@ router.get("/orders/assignments", async (_req, res) => {
 router.get("/orders/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
-  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, id));
+  const actor = await resolveOptionalDashboardActor(req);
+  const [order] = await db.select().from(ordersTable).where(and(eq(ordersTable.id, id), branchOrderFilter(actor)));
   if (!order) { res.status(404).json({ error: "الطلب غير موجود" }); return; }
   res.json(order);
 });
 
-router.get("/orders", async (req, res) => {
+router.get("/orders", requireDashboardUser, async (_req, res) => {
+  const branchFilter = branchOrderFilter(res.locals.dashboardActor as DashboardActor);
   const orders = await db
     .select()
     .from(ordersTable)
+    .where(branchFilter)
     .orderBy(desc(ordersTable.createdAt))
     .limit(100);
   res.json(orders);
@@ -369,8 +381,8 @@ function buildCustomerStatusMessage(status: string, dailyNumber: number, isDeliv
   }
 }
 
-router.patch("/orders/:id/status", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.patch("/orders/:id/status", requireDashboardUser, async (req, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "معرّف غير صحيح" });
     return;
@@ -381,10 +393,11 @@ router.patch("/orders/:id/status", async (req, res) => {
     res.status(400).json({ error: "حالة غير صحيحة" });
     return;
   }
+  const branchFilter = branchOrderFilter(res.locals.dashboardActor as DashboardActor);
   const [order] = await db
     .update(ordersTable)
     .set({ status: status as "pending" | "preparing" | "ready" | "done" | "cancelled" })
-    .where(eq(ordersTable.id, id))
+    .where(and(eq(ordersTable.id, id), branchFilter))
     .returning();
   if (!order) {
     res.status(404).json({ error: "الطلب غير موجود" });

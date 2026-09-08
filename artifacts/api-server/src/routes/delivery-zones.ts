@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db, deliveryZonesTable, branchesTable } from "@workspace/db";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
-import { requireDashboardAdmin } from "./dashboard-auth";
+import { requireDashboardUser } from "./dashboard-auth";
 
 const router = Router();
 
@@ -22,10 +22,18 @@ function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
   return inside;
 }
 
-router.get("/delivery-zones", async (req, res) => {
+router.get("/delivery-zones", requireDashboardUser, async (_req, res) => {
+  const actor = res.locals.dashboardActor;
+  if (actor.role !== "admin" && actor.branchIds.length === 0) {
+    res.json([]);
+    return;
+  }
   const zones = await db
     .select()
     .from(deliveryZonesTable)
+    .where(actor && actor.role !== "admin"
+      ? and(isNotNull(deliveryZonesTable.branchId), inArray(deliveryZonesTable.branchId, actor.branchIds))
+      : undefined)
     .orderBy(asc(deliveryZonesTable.sortOrder), asc(deliveryZonesTable.id));
   res.json(zones);
 });
@@ -76,13 +84,17 @@ const zoneSchema = z.object({
   branchId: z.number().int().positive().nullable().optional(),
 });
 
-router.post("/delivery-zones", requireDashboardAdmin, async (req, res) => {
+router.post("/delivery-zones", requireDashboardUser, async (req, res) => {
   const parsed = zoneSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "بيانات غير صحيحة", details: parsed.error.flatten() });
     return;
   }
   const { name, polygon, deliveryFee, minOrder, enabled, sortOrder, branchId } = parsed.data;
+  const actor = res.locals.dashboardActor;
+  if (actor.role !== "admin" && (branchId == null || !actor.branchIds.includes(branchId))) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
   if (branchId !== undefined && branchId !== null) {
     const [branch] = await db
       .select({ id: branchesTable.id })
@@ -98,7 +110,7 @@ router.post("/delivery-zones", requireDashboardAdmin, async (req, res) => {
   res.status(201).json(zone);
 });
 
-router.put("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
+router.put("/delivery-zones/:id", requireDashboardUser, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
 
@@ -107,6 +119,16 @@ router.put("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
   if (!parsed.success) {
     res.status(400).json({ error: "بيانات غير صحيحة" });
     return;
+  }
+  const actor = res.locals.dashboardActor;
+  const [existing] = await db.select({ branchId: deliveryZonesTable.branchId })
+    .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+  if (!existing) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
+  if (actor.role !== "admin" && (existing.branchId == null || !actor.branchIds.includes(existing.branchId))) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
+  if (actor.role !== "admin" && (parsed.data.branchId === null || (parsed.data.branchId !== undefined && !actor.branchIds.includes(parsed.data.branchId)))) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
   }
   if (parsed.data.branchId !== undefined && parsed.data.branchId !== null) {
     const [branch] = await db
@@ -125,9 +147,16 @@ router.put("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
   res.json(zone);
 });
 
-router.delete("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
+router.delete("/delivery-zones/:id", requireDashboardUser, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = res.locals.dashboardActor;
+  const [existing] = await db.select({ branchId: deliveryZonesTable.branchId })
+    .from(deliveryZonesTable).where(eq(deliveryZonesTable.id, id)).limit(1);
+  if (!existing) { res.status(404).json({ error: "المنطقة غير موجودة" }); return; }
+  if (actor.role !== "admin" && (existing.branchId == null || !actor.branchIds.includes(existing.branchId))) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
   await db.delete(deliveryZonesTable).where(eq(deliveryZonesTable.id, id));
   res.json({ ok: true });
 });

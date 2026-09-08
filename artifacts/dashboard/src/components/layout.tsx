@@ -22,6 +22,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/cashier":           "لوحة الكاشير",
   "/admin":             "لوحة الإدارة",
   "/auth-diagnostics":  "تشخيص المصادقة",
+  "/branches":          "إدارة الفروع",
+  "/users":             "إدارة المستخدمين",
 };
 
 export function Layout({ children, fullWidth = false }: LayoutProps) {

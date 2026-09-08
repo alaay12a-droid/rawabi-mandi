@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db, branchesTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { requireDashboardAdmin } from "./dashboard-auth";
+import { requireDashboardAdmin, resolveOptionalDashboardActor } from "./dashboard-auth";
 
 const router = Router();
 
@@ -19,10 +19,12 @@ const branchSchema = z.object({
 });
 
 // ── GET /branches ─────────────────────────────────────────────────────────────
-router.get("/branches", async (_req, res) => {
+router.get("/branches", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const branches = await db
     .select()
     .from(branchesTable)
+    .where(actor && actor.role !== "admin" ? inArray(branchesTable.id, actor.branchIds) : undefined)
     .orderBy(desc(branchesTable.createdAt));
   res.json(branches);
 });
