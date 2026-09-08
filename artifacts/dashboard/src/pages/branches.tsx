@@ -20,6 +20,8 @@ interface Branch {
   active: boolean;
   lat: number | null;
   lng: number | null;
+  deliveryEnabled: boolean;
+  pickupEnabled: boolean;
   createdAt: string;
 }
 
@@ -32,10 +34,13 @@ interface BranchForm {
   active: boolean;
   lat: string;
   lng: string;
+  deliveryEnabled: boolean;
+  pickupEnabled: boolean;
 }
 
 const emptyForm = (): BranchForm => ({
-  name: "", address: "", phone: "", mapsUrl: "", active: true, lat: "", lng: "",
+  name: "", address: "", phone: "", mapsUrl: "", active: false, lat: "", lng: "",
+  deliveryEnabled: false, pickupEnabled: false,
 });
 
 export default function Branches() {
@@ -77,6 +82,8 @@ export default function Branches() {
       active: b.active,
       lat: b.lat != null ? String(b.lat) : "",
       lng: b.lng != null ? String(b.lng) : "",
+      deliveryEnabled: b.deliveryEnabled,
+      pickupEnabled: b.pickupEnabled,
     });
     setFormError("");
     setDialogOpen(true);
@@ -85,18 +92,33 @@ export default function Branches() {
   // ── Save ───────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!form.name.trim()) { setFormError("اسم الفرع مطلوب"); return; }
+    const hasLat = form.lat.trim() !== "";
+    const hasLng = form.lng.trim() !== "";
+    if (hasLat !== hasLng) {
+      setFormError("أدخل خط العرض وخط الطول معًا، أو اترك الحقلين فارغين");
+      return;
+    }
+    const latVal = hasLat ? Number(form.lat) : null;
+    const lngVal = hasLng ? Number(form.lng) : null;
+    if (
+      (latVal !== null && (!Number.isFinite(latVal) || latVal < -90 || latVal > 90))
+      || (lngVal !== null && (!Number.isFinite(lngVal) || lngVal < -180 || lngVal > 180))
+    ) {
+      setFormError("تحقق من الإحداثيات: Latitude بين -90 و90 وLongitude بين -180 و180");
+      return;
+    }
     setSaving(true);
     try {
-      const latVal = parseFloat(form.lat);
-      const lngVal = parseFloat(form.lng);
       const payload = {
         name:    form.name.trim(),
         address: form.address.trim() || null,
         phone:   form.phone.trim()   || null,
         mapsUrl: form.mapsUrl.trim() || null,
         active:  form.active,
-        lat:     !isNaN(latVal) ? latVal : null,
-        lng:     !isNaN(lngVal) ? lngVal : null,
+        lat: latVal,
+        lng: lngVal,
+        deliveryEnabled: form.deliveryEnabled,
+        pickupEnabled: form.pickupEnabled,
       };
       if (form.id) {
         await apiPut(`/branches/${form.id}`, payload);
@@ -197,6 +219,14 @@ export default function Branches() {
                     <span className="font-bold text-base truncate">{b.name}</span>
                     <Badge variant={b.active ? "default" : "secondary"} className="text-xs shrink-0">
                       {b.active ? "نشط" : "موقوف"}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    <Badge variant={b.deliveryEnabled ? "outline" : "secondary"} className="text-[11px]">
+                      التوصيل: {b.deliveryEnabled ? "مفعّل" : "موقوف"}
+                    </Badge>
+                    <Badge variant={b.pickupEnabled ? "outline" : "secondary"} className="text-[11px]">
+                      الاستلام: {b.pickupEnabled ? "مفعّل" : "موقوف"}
                     </Badge>
                   </div>
                   {b.address && (
@@ -311,6 +341,8 @@ export default function Branches() {
                     dir="ltr"
                     type="number"
                     step="any"
+                   min="-90"
+                   max="90"
                   />
                 </div>
                 <div className="flex-1 space-y-1">
@@ -322,6 +354,8 @@ export default function Branches() {
                     dir="ltr"
                     type="number"
                     step="any"
+                   min="-180"
+                   max="180"
                   />
                 </div>
               </div>
@@ -333,6 +367,22 @@ export default function Branches() {
                 onCheckedChange={v => setForm(f => ({ ...f, active: v }))}
               />
               <Label htmlFor="form-active">نشط (مرئي للعملاء)</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="form-delivery-enabled"
+                checked={form.deliveryEnabled}
+                onCheckedChange={v => setForm(f => ({ ...f, deliveryEnabled: v }))}
+              />
+              <Label htmlFor="form-delivery-enabled">التوصيل مفعّل</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="form-pickup-enabled"
+                checked={form.pickupEnabled}
+                onCheckedChange={v => setForm(f => ({ ...f, pickupEnabled: v }))}
+              />
+              <Label htmlFor="form-pickup-enabled">الاستلام من الفرع مفعّل</Label>
             </div>
             {formError && <p className="text-destructive text-sm">{formError}</p>}
           </div>

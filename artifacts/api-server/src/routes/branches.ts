@@ -11,8 +11,10 @@ const branchSchema = z.object({
   phone:   z.string().nullable().optional(),
   mapsUrl: z.string().nullable().optional(),
   active:  z.boolean().optional(),
-  lat:     z.number().nullable().optional(),
-  lng:     z.number().nullable().optional(),
+  lat:     z.number().min(-90).max(90).nullable().optional(),
+  lng:     z.number().min(-180).max(180).nullable().optional(),
+  deliveryEnabled: z.boolean().optional(),
+  pickupEnabled: z.boolean().optional(),
 });
 
 // ── GET /branches ─────────────────────────────────────────────────────────────
@@ -38,6 +40,8 @@ router.post("/branches", async (req, res) => {
       active:  parsed.data.active  ?? true,
       lat:     parsed.data.lat     ?? null,
       lng:     parsed.data.lng     ?? null,
+      deliveryEnabled: parsed.data.deliveryEnabled ?? true,
+      pickupEnabled: parsed.data.pickupEnabled ?? true,
     })
     .returning();
   res.json(branch);
@@ -59,6 +63,8 @@ router.put("/branches/:id", async (req, res) => {
       ...(parsed.data.active  !== undefined ? { active:  parsed.data.active }  : {}),
       ...(parsed.data.lat     !== undefined ? { lat:     parsed.data.lat }     : {}),
       ...(parsed.data.lng     !== undefined ? { lng:     parsed.data.lng }     : {}),
+      ...(parsed.data.deliveryEnabled !== undefined ? { deliveryEnabled: parsed.data.deliveryEnabled } : {}),
+      ...(parsed.data.pickupEnabled !== undefined ? { pickupEnabled: parsed.data.pickupEnabled } : {}),
     })
     .where(eq(branchesTable.id, id))
     .returning();
