@@ -3,24 +3,9 @@ import { db, deliveryZonesTable, branchesTable } from "@workspace/db";
 import { eq, asc, and, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { requireDashboardUser } from "./dashboard-auth";
+import { pointInPolygon, type LatLng } from "../lib/geo";
 
 const router = Router();
-
-type LatLng = { lat: number; lng: number };
-
-function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
-  if (polygon.length < 3) return false;
-  let inside = false;
-  const { lat: py, lng: px } = point;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const { lat: iy, lng: ix } = polygon[i];
-    const { lat: jy, lng: jx } = polygon[j];
-    if ((iy > py) !== (jy > py) && px < ((jx - ix) * (py - iy)) / (jy - iy) + ix) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
 
 router.get("/delivery-zones", requireDashboardUser, async (_req, res) => {
   const actor = res.locals.dashboardActor;
