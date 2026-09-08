@@ -1,11 +1,52 @@
 import { Router } from "express";
-import { db, deliveryDriversTable, orderDriverAssignmentsTable, ordersTable, appSettingsTable, messagesTable, driverRatingsTable } from "@workspace/db";
+import { db, deliveryDriversTable, orderDriverAssignmentsTable, ordersTable, appSettingsTable, messagesTable, driverRatingsTable, driverBranchMembershipsTable, branchesTable } from "@workspace/db";
 import { eq, desc, and, gte, lt, ne, sql, inArray, notInArray, isNotNull, or, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { sendPushToDriver, sendPushToToken, sendPushToCashiers } from "../lib/sendPushNotification.js";
 import { logger } from "../lib/logger.js";
+import { requireDashboardAdmin, requireDashboardUser, resolveOptionalDashboardActor } from "./dashboard-auth";
+import { activeOrdersCanBatchForOrderBranch, filterEligibleDriversForOrderBranch } from "../lib/driverDispatch.js";
 
 const router = Router();
+
+/** Inactive memberships are intentionally included: branch staff need to see a
+ * driver's current admin-managed status even when that branch association is disabled. */
+async function driverBelongsToBranches(driverId: number, branchIds: number[]): Promise<boolean> {
+  if (!branchIds.length) return false;
+  const [membership] = await db.select({ id: driverBranchMembershipsTable.id })
+    .from(driverBranchMembershipsTable)
+    .where(and(eq(driverBranchMembershipsTable.driverId, driverId), inArray(driverBranchMembershipsTable.branchId, branchIds)))
+    .limit(1);
+  return Boolean(membership);
+}
+
+/** A branch employee may edit shared driver data only when no other branch has
+ * a membership for that driver. Inactive memberships count as associations. */
+async function driverOnlyBelongsToBranches(driverId: number, branchIds: number[]): Promise<boolean> {
+  if (!branchIds.length) return false;
+  const memberships = await db.select({ branchId: driverBranchMembershipsTable.branchId })
+    .from(driverBranchMembershipsTable)
+    .where(eq(driverBranchMembershipsTable.driverId, driverId));
+  return memberships.length > 0 && memberships.every(({ branchId }) => branchIds.includes(branchId));
+}
+
+async function orderBelongsToBranches(orderId: number, branchIds: number[]): Promise<boolean> {
+  if (!branchIds.length) return false;
+  const [order] = await db.select({ id: ordersTable.id }).from(ordersTable)
+    .where(and(eq(ordersTable.id, orderId), inArray(ordersTable.branchId, branchIds))).limit(1);
+  return Boolean(order);
+}
+
+async function authorizeDashboardOrder(res: any, orderId: number, driverId?: number): Promise<boolean> {
+  const actor = res.locals.dashboardActor;
+  if (actor.role === "admin") return true;
+  if (!await orderBelongsToBranches(orderId, actor.branchIds) ||
+      (driverId !== undefined && !await driverBelongsToBranches(driverId, actor.branchIds))) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" });
+    return false;
+  }
+  return true;
+}
 
 // ── Haversine distance (km) — used for auto-assign proximity calculation ──────
 function haversineKmServer(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -52,13 +93,24 @@ const driverSchema = z.object({
 });
 
 // ── GET /drivers ──────────────────────────────────────────────────────────────
-router.get("/drivers", async (_req, res) => {
-  const drivers = await db.select().from(deliveryDriversTable).orderBy(desc(deliveryDriversTable.createdAt));
-  res.json(drivers);
+router.get("/drivers", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
+  if (!actor || actor.role === "admin") {
+    const drivers = await db.select().from(deliveryDriversTable).orderBy(desc(deliveryDriversTable.createdAt));
+    res.json(drivers);
+    return;
+  }
+  if (actor.branchIds.length === 0) { res.json([]); return; }
+  const drivers = await db.select({ driver: deliveryDriversTable }).from(deliveryDriversTable)
+    .innerJoin(driverBranchMembershipsTable, eq(driverBranchMembershipsTable.driverId, deliveryDriversTable.id))
+    .where(inArray(driverBranchMembershipsTable.branchId, actor.branchIds))
+    .orderBy(desc(deliveryDriversTable.createdAt));
+  // A driver can belong to several authorized branches; preserve one driver row.
+  res.json(Array.from(new Map(drivers.map(({ driver }) => [driver.id, driver])).values()));
 });
 
 // ── POST /drivers ─────────────────────────────────────────────────────────────
-router.post("/drivers", async (req, res) => {
+router.post("/drivers", requireDashboardAdmin, async (req, res) => {
   const parsed = driverSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   try {
@@ -79,9 +131,11 @@ router.post("/drivers", async (req, res) => {
 });
 
 // ── PUT /drivers/:id ──────────────────────────────────────────────────────────
-router.put("/drivers/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.put("/drivers/:id", requireDashboardUser, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = res.locals.dashboardActor;
+  if (actor.role !== "admin" && !await driverOnlyBelongsToBranches(id, actor.branchIds)) { res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return; }
   const parsed = driverSchema.partial().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   try {
@@ -96,13 +150,138 @@ router.put("/drivers/:id", async (req, res) => {
 });
 
 // ── DELETE /drivers/:id ───────────────────────────────────────────────────────
-router.delete("/drivers/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.delete("/drivers/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   await db.delete(messagesTable).where(eq(messagesTable.driverId, id));
   await db.delete(orderDriverAssignmentsTable).where(eq(orderDriverAssignmentsTable.driverId, id));
   await db.delete(deliveryDriversTable).where(eq(deliveryDriversTable.id, id));
   res.json({ ok: true });
+});
+
+const membershipSchema = z.object({
+  branchId: z.number().int().positive(),
+});
+
+const membershipActiveSchema = z.object({
+  active: z.boolean(),
+});
+
+async function driverExists(driverId: number): Promise<boolean> {
+  const [driver] = await db
+    .select({ id: deliveryDriversTable.id })
+    .from(deliveryDriversTable)
+    .where(eq(deliveryDriversTable.id, driverId))
+    .limit(1);
+  return Boolean(driver);
+}
+
+// ── GET /drivers/:driverId/branches ───────────────────────────────────────────
+// Memberships may be inactive; callers receive their joined branch information.
+router.get("/drivers/:driverId/branches", async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+    res.status(400).json({ error: "معرّف المندوب غير صحيح" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+  const actor = await resolveOptionalDashboardActor(req);
+  if (actor && actor.role !== "admin" && !await driverBelongsToBranches(driverId, actor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
+
+  const rows = await db
+    .select({ membership: driverBranchMembershipsTable, branch: branchesTable })
+    .from(driverBranchMembershipsTable)
+    .innerJoin(branchesTable, eq(driverBranchMembershipsTable.branchId, branchesTable.id))
+    .where(actor && actor.role !== "admin"
+      ? and(eq(driverBranchMembershipsTable.driverId, driverId), inArray(driverBranchMembershipsTable.branchId, actor.branchIds))
+      : eq(driverBranchMembershipsTable.driverId, driverId))
+    .orderBy(branchesTable.name);
+  res.json(rows.map(({ membership, branch }) => ({ ...membership, branch })));
+});
+
+// ── POST /drivers/:driverId/branches ──────────────────────────────────────────
+// A matching inactive membership is reactivated rather than creating a duplicate.
+router.post("/drivers/:driverId/branches", requireDashboardAdmin, async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+    res.status(400).json({ error: "معرّف المندوب غير صحيح" });
+    return;
+  }
+  const parsed = membershipSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات غير صحيحة" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+  const [branch] = await db
+    .select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(eq(branchesTable.id, parsed.data.branchId))
+    .limit(1);
+  if (!branch) {
+    res.status(404).json({ error: "فرع غير موجود" });
+    return;
+  }
+
+  const [membership] = await db
+    .insert(driverBranchMembershipsTable)
+    .values({ driverId, branchId: parsed.data.branchId, active: true })
+    .onConflictDoUpdate({
+      target: [driverBranchMembershipsTable.driverId, driverBranchMembershipsTable.branchId],
+      set: { active: true },
+    })
+    .returning();
+  res.status(201).json(membership);
+});
+
+// ── PUT /drivers/:driverId/branches/:branchId ─────────────────────────────────
+router.put("/drivers/:driverId/branches/:branchId", requireDashboardAdmin, async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  const branchId = Number(req.params.branchId);
+  if (!Number.isInteger(driverId) || driverId <= 0 || !Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: "معرّف غير صحيح" });
+    return;
+  }
+  const parsed = membershipActiveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات غير صحيحة" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+  const [branch] = await db
+    .select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(eq(branchesTable.id, branchId))
+    .limit(1);
+  if (!branch) {
+    res.status(404).json({ error: "فرع غير موجود" });
+    return;
+  }
+
+  const [membership] = await db
+    .update(driverBranchMembershipsTable)
+    .set({ active: parsed.data.active })
+    .where(and(
+      eq(driverBranchMembershipsTable.driverId, driverId),
+      eq(driverBranchMembershipsTable.branchId, branchId),
+    ))
+    .returning();
+  if (!membership) {
+    res.status(404).json({ error: "ارتباط المندوب بالفرع غير موجود" });
+    return;
+  }
+  res.json(membership);
 });
 
 // ── PUT /drivers/:id/online-status ───────────────────────────────────────────
@@ -133,13 +312,17 @@ router.post("/drivers/login", async (req, res) => {
 });
 
 // ── GET /drivers/active-assignments  (all picked_up — cashier view) ──────────
-router.get("/drivers/active-assignments", async (_req, res) => {
+router.get("/drivers/active-assignments", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const rows = await db
     .select({ assignment: orderDriverAssignmentsTable, order: ordersTable, driver: deliveryDriversTable })
     .from(orderDriverAssignmentsTable)
     .leftJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
     .leftJoin(deliveryDriversTable, eq(orderDriverAssignmentsTable.driverId, deliveryDriversTable.id))
-    .where(eq(orderDriverAssignmentsTable.status, "picked_up"))
+    .where(and(
+      eq(orderDriverAssignmentsTable.status, "picked_up"),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
+    ))
     .orderBy(desc(orderDriverAssignmentsTable.pickedUpAt));
   res.json(rows.map(r => ({
     orderId: r.assignment.orderId,
@@ -158,6 +341,7 @@ router.get("/drivers/active-assignments", async (_req, res) => {
 
 // ── GET /drivers/all-deliveries?date=YYYY-MM-DD  (all drivers flat list) ──────
 router.get("/drivers/all-deliveries", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const dateStr = String(req.query.date ?? "");
   const dayStart = dateStr ? new Date(dateStr) : new Date();
   dayStart.setHours(0, 0, 0, 0);
@@ -173,6 +357,7 @@ router.get("/drivers/all-deliveries", async (req, res) => {
       eq(orderDriverAssignmentsTable.status, "delivered"),
       gte(orderDriverAssignmentsTable.deliveredAt, dayStart),
       lt(orderDriverAssignmentsTable.deliveredAt, dayEnd),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.deliveredAt));
 
@@ -190,6 +375,7 @@ router.get("/drivers/all-deliveries", async (req, res) => {
 
 // ── GET /drivers/report?from=YYYY-MM-DD&to=YYYY-MM-DD  (range report) ────────
 router.get("/drivers/report", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const fromStr = String(req.query.from ?? "");
   const toStr   = String(req.query.to   ?? "");
 
@@ -205,6 +391,7 @@ router.get("/drivers/report", async (req, res) => {
       eq(orderDriverAssignmentsTable.status, "delivered"),
       gte(orderDriverAssignmentsTable.deliveredAt, from),
       lt(orderDriverAssignmentsTable.deliveredAt, to),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.deliveredAt));
 
@@ -252,11 +439,19 @@ router.get("/drivers/report", async (req, res) => {
 });
 
 // ── GET /drivers/daily-summaries  (all drivers — admin view) ─────────────────
-router.get("/drivers/daily-summaries", async (_req, res) => {
+router.get("/drivers/daily-summaries", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const drivers = await db.select().from(deliveryDriversTable).orderBy(deliveryDriversTable.name);
+  const allDrivers = actor && actor.role !== "admin"
+    ? await db.select({ driver: deliveryDriversTable }).from(deliveryDriversTable)
+      .innerJoin(driverBranchMembershipsTable, eq(driverBranchMembershipsTable.driverId, deliveryDriversTable.id))
+      .where(actor.branchIds.length ? inArray(driverBranchMembershipsTable.branchId, actor.branchIds) : sql`false`).orderBy(deliveryDriversTable.name)
+    : null;
+  const drivers = allDrivers
+    ? Array.from(new Map(allDrivers.map(({ driver }) => [driver.id, driver])).values())
+    : await db.select().from(deliveryDriversTable).orderBy(deliveryDriversTable.name);
   const results = await Promise.all(drivers.map(async (driver) => {
     const rows = await db
       .select({ assignment: orderDriverAssignmentsTable, order: ordersTable })
@@ -267,6 +462,7 @@ router.get("/drivers/daily-summaries", async (_req, res) => {
         eq(orderDriverAssignmentsTable.status, "delivered"),
         gte(orderDriverAssignmentsTable.deliveredAt, today),
         lt(orderDriverAssignmentsTable.deliveredAt, tomorrow),
+        ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
       ))
       .orderBy(desc(orderDriverAssignmentsTable.deliveredAt));
 
@@ -291,6 +487,10 @@ router.get("/drivers/daily-summaries", async (_req, res) => {
 router.get("/drivers/:id/statement", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = await resolveOptionalDashboardActor(req);
+  if (actor && actor.role !== "admin" && !await driverBelongsToBranches(id, actor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
 
   // Delivered orders
   const deliveredRows = await db
@@ -300,6 +500,7 @@ router.get("/drivers/:id/statement", async (req, res) => {
     .where(and(
       eq(orderDriverAssignmentsTable.driverId, id),
       eq(orderDriverAssignmentsTable.status, "delivered"),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.deliveredAt));
 
@@ -312,6 +513,7 @@ router.get("/drivers/:id/statement", async (req, res) => {
       eq(orderDriverAssignmentsTable.driverId, id),
       ne(orderDriverAssignmentsTable.status, "delivered"),
       eq(ordersTable.status, "cancelled"),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.assignedAt));
 
@@ -409,6 +611,10 @@ router.get("/drivers/:id/statement", async (req, res) => {
 router.get("/drivers/:id/daily-summary", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = await resolveOptionalDashboardActor(req);
+  if (actor && actor.role !== "admin" && !await driverBelongsToBranches(id, actor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
@@ -422,6 +628,7 @@ router.get("/drivers/:id/daily-summary", async (req, res) => {
       eq(orderDriverAssignmentsTable.status, "delivered"),
       gte(orderDriverAssignmentsTable.deliveredAt, today),
       lt(orderDriverAssignmentsTable.deliveredAt, tomorrow),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.deliveredAt));
 
@@ -443,6 +650,10 @@ router.get("/drivers/:id/daily-summary", async (req, res) => {
 router.get("/drivers/:id/orders", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = await resolveOptionalDashboardActor(req);
+  if (actor && actor.role !== "admin" && !await driverBelongsToBranches(id, actor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
   const rows = await db
     .select({
       assignment: orderDriverAssignmentsTable,
@@ -455,31 +666,58 @@ router.get("/drivers/:id/orders", async (req, res) => {
       // Use OR to handle NULL safely: leftJoin may yield null status if order
       // row is missing; NULL != 'cancelled' evaluates to NULL (falsy) in SQL.
       or(isNull(ordersTable.status), ne(ordersTable.status, "cancelled")),
+      ...(actor && actor.role !== "admin" ? [actor.branchIds.length ? inArray(ordersTable.branchId, actor.branchIds) : sql`false`] : []),
     ))
     .orderBy(desc(orderDriverAssignmentsTable.assignedAt));
   res.json(rows);
 });
 
 // ── POST /orders/:id/assign-driver ────────────────────────────────────────────
-router.post("/orders/:id/assign-driver", async (req, res) => {
-  const orderId = parseInt(req.params.id);
+router.post("/orders/:id/assign-driver", requireDashboardUser, async (req, res) => {
+  const orderId = parseInt(String(req.params.id));
   if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   const { driverId } = req.body;
   if (!driverId) { res.status(400).json({ error: "اختر مندوباً" }); return; }
   const driverIdInt = parseInt(driverId);
   if (isNaN(driverIdInt)) { res.status(400).json({ error: "معرّف المندوب غير صحيح" }); return; }
+  if (!await authorizeDashboardOrder(res, orderId, driverIdInt)) return;
+  const dashboardActor = res.locals.dashboardActor;
 
   const result = await db.transaction(async (tx) => {
-    const [driver] = await tx
-      .select({ id: deliveryDriversTable.id })
-      .from(deliveryDriversTable)
-      .where(and(
-        eq(deliveryDriversTable.id, driverIdInt),
-        eq(deliveryDriversTable.active, true),
-        eq(deliveryDriversTable.isOnline, true),
-      ))
-      .limit(1);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(19870401, ${orderId})`);
+    const lockedOrderResult = await tx.execute(sql`
+      SELECT branch_id FROM orders WHERE id = ${orderId} FOR UPDATE
+    `);
+    const targetOrder = lockedOrderResult.rows[0] as { branch_id: number | null } | undefined;
+    if (!targetOrder) return { assignment: null, error: "الطلب غير موجود." };
+    if (dashboardActor.role !== "admin") {
+      const actorBranchResult = targetOrder.branch_id == null ? null : await tx.execute(sql`
+        SELECT id FROM dashboard_user_branches
+        WHERE dashboard_user_id = ${dashboardActor.id} AND branch_id = ${targetOrder.branch_id}
+        FOR UPDATE
+      `);
+      if (!actorBranchResult?.rows[0]) {
+        return { assignment: null, error: "غير مصرح لهذا الفرع", status: 403 };
+      }
+    }
+
+    const driverResult = await tx.execute(sql`
+      SELECT id FROM delivery_drivers
+      WHERE id = ${driverIdInt} AND active = true AND is_online = true
+      FOR UPDATE
+    `);
+    const driver = driverResult.rows[0];
     if (!driver) return { assignment: null, error: "المندوب غير متصل أو غير متاح للتعيين." };
+    if (targetOrder.branch_id != null) {
+      const membershipResult = await tx.execute(sql`
+        SELECT id FROM driver_branch_memberships
+        WHERE driver_id = ${driverIdInt} AND branch_id = ${targetOrder.branch_id} AND active = true
+        FOR UPDATE
+      `);
+      if (!membershipResult.rows[0]) {
+        return { assignment: null, error: "المندوب غير مؤهل للتعيين في فرع هذا الطلب." };
+      }
+    }
 
     const [assignment] = await tx
       .insert(orderDriverAssignmentsTable)
@@ -493,7 +731,7 @@ router.post("/orders/:id/assign-driver", async (req, res) => {
   });
 
   if (!result.assignment) {
-    res.status(409).json({ error: result.error });
+    res.status(result.status ?? 409).json({ error: result.error });
     return;
   }
   const assignment = result.assignment;
@@ -559,9 +797,13 @@ router.put("/drivers/:id/location", async (req, res) => {
 // ── POST /orders/:id/auto-assign-driver ──────────────────────────────────────
 // Finds the closest eligible driver and assigns them automatically.
 // Returns { ok: true, driverId, driverName } or { ok: false, error }.
-router.post("/orders/:id/auto-assign-driver", async (req, res) => {
-  const orderId = parseInt(req.params.id);
+router.post("/orders/:id/auto-assign-driver", requireDashboardUser, async (req, res) => {
+  const orderId = parseInt(String(req.params.id));
   if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  // This dashboard action selects a driver internally; ensure its order branch
+  // is authorized before retaining the established assignment algorithm.
+  if (!await authorizeDashboardOrder(res, orderId)) return;
+  const dashboardActor = res.locals.dashboardActor;
 
   const AUTO_RESTAURANT_LAT = 28.410769;
   const AUTO_RESTAURANT_LNG = 36.532353;
@@ -571,15 +813,80 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   const AUTO_BATCH_MAX_ACTIVE_ORDERS = 2; // Never auto-stack more than two active orders.
   const cutoff = new Date(Date.now() - GPS_STALE_MS);
 
+  // Resolve the dispatch branch and origin before considering candidates.
+  // Null-branch orders intentionally keep the historical hardcoded origin.
+  const [dispatchOrder] = await db
+    .select({ branchId: ordersTable.branchId })
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId))
+    .limit(1);
+  if (!dispatchOrder) {
+    res.json({ ok: false, error: "الطلب غير موجود." });
+    return;
+  }
+  // An existing assignment wins over coordinate validation and candidate
+  // eligibility; it is returned deterministically for this authorized order.
+  const [preexistingAssignment] = await db
+    .select({
+      driverId: orderDriverAssignmentsTable.driverId,
+      driverName: deliveryDriversTable.name,
+    })
+    .from(orderDriverAssignmentsTable)
+    .innerJoin(deliveryDriversTable, eq(orderDriverAssignmentsTable.driverId, deliveryDriversTable.id))
+    .where(eq(orderDriverAssignmentsTable.orderId, orderId))
+    .limit(1);
+  if (preexistingAssignment) {
+    res.json({
+      ok: true,
+      driverId: preexistingAssignment.driverId,
+      driverName: preexistingAssignment.driverName,
+      alreadyAssigned: true,
+    });
+    return;
+  }
+  let dispatchOrigin = { lat: AUTO_RESTAURANT_LAT, lng: AUTO_RESTAURANT_LNG };
+  if (dispatchOrder.branchId != null) {
+    const [branch] = await db
+      .select({ lat: branchesTable.lat, lng: branchesTable.lng })
+      .from(branchesTable)
+      .where(eq(branchesTable.id, dispatchOrder.branchId))
+      .limit(1);
+    if (branch?.lat == null || branch.lng == null ||
+        !Number.isFinite(branch.lat) || !Number.isFinite(branch.lng) ||
+        Math.abs(branch.lat) > 90 || Math.abs(branch.lng) > 180) {
+      res.json({ ok: false, error: "إحداثيات فرع الطلب غير صالحة للتعيين التلقائي." });
+      return;
+    }
+    dispatchOrigin = { lat: branch.lat, lng: branch.lng };
+  }
+
   // 1. All online+active drivers (GPS no longer mandatory — drivers without
   //    recent GPS are still eligible and sorted to the end of the list)
-  const onlineDrivers = await db
+  const onlineDriversUnscoped = await db
     .select()
     .from(deliveryDriversTable)
     .where(and(
       eq(deliveryDriversTable.isOnline, true),
       eq(deliveryDriversTable.active, true),
     ));
+  const dashboardScopedDrivers = dashboardActor && dashboardActor.role !== "admin"
+    ? (await Promise.all(onlineDriversUnscoped.map(async driver =>
+      await driverBelongsToBranches(driver.id, dashboardActor.branchIds) ? driver : null
+    ))).filter((driver): driver is typeof onlineDriversUnscoped[number] => driver !== null)
+    : onlineDriversUnscoped;
+  const memberships = dispatchOrder.branchId == null
+    ? []
+    : await db.select({
+      driverId: driverBranchMembershipsTable.driverId,
+      branchId: driverBranchMembershipsTable.branchId,
+      active: driverBranchMembershipsTable.active,
+    }).from(driverBranchMembershipsTable)
+      .where(eq(driverBranchMembershipsTable.branchId, dispatchOrder.branchId));
+  const onlineDrivers = filterEligibleDriversForOrderBranch(
+    dashboardScopedDrivers,
+    dispatchOrder.branchId,
+    memberships,
+  );
 
   if (onlineDrivers.length === 0) {
     res.json({ ok: false, error: "لا يوجد مندوب متاح حاليًا للتعيين التلقائي." });
@@ -591,6 +898,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
     .select({
       driverId: orderDriverAssignmentsTable.driverId,
       customerAddress: ordersTable.customerAddress,
+      branchId: ordersTable.branchId,
     })
     .from(orderDriverAssignmentsTable)
     .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
@@ -606,7 +914,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       const hasFreshGps = d.lastLat != null && d.lastLng != null &&
         d.lastLocationAt != null && d.lastLocationAt >= cutoff;
       const distKm = hasFreshGps
-        ? haversineKmServer(AUTO_RESTAURANT_LAT, AUTO_RESTAURANT_LNG, d.lastLat!, d.lastLng!)
+        ? haversineKmServer(dispatchOrigin.lat, dispatchOrigin.lng, d.lastLat!, d.lastLng!)
         : 9999; // No GPS — put at end, still eligible
       return { ...d, distKm, hasFreshGps };
     });
@@ -623,9 +931,20 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
 
   const tryCandidate = async (candidate: Candidate, allowBatching: boolean) => {
     return db.transaction(async (tx) => {
-      // Lock the order first so simultaneous requests for the same order cannot
-      // create or replace more than one assignment.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(19870401, ${orderId})`);
+      const lockedOrderResult = await tx.execute(sql`
+        SELECT branch_id FROM orders WHERE id = ${orderId} FOR UPDATE
+      `);
+      const lockedOrder = lockedOrderResult.rows[0] as { branch_id: number | null } | undefined;
+      if (!lockedOrder || lockedOrder.branch_id !== dispatchOrder.branchId) return null;
+      if (dashboardActor.role !== "admin") {
+        const actorBranchResult = lockedOrder.branch_id == null ? null : await tx.execute(sql`
+          SELECT id FROM dashboard_user_branches
+          WHERE dashboard_user_id = ${dashboardActor.id} AND branch_id = ${lockedOrder.branch_id}
+          FOR UPDATE
+        `);
+        if (!actorBranchResult?.rows[0]) return null;
+      }
 
       const [existing] = await tx
         .select({
@@ -644,25 +963,29 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         };
       }
 
-      // Serialize every availability/batching decision for this driver.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(19870402, ${candidate.id})`);
 
-      const [stillEligible] = await tx
-        .select({ id: deliveryDriversTable.id })
-        .from(deliveryDriversTable)
-        .where(and(
-          eq(deliveryDriversTable.id, candidate.id),
-          eq(deliveryDriversTable.active, true),
-          eq(deliveryDriversTable.isOnline, true),
-        ))
-        .limit(1);
-      if (!stillEligible) return null;
+      const driverResult = await tx.execute(sql`
+        SELECT id FROM delivery_drivers
+        WHERE id = ${candidate.id} AND active = true AND is_online = true
+        FOR UPDATE
+      `);
+      if (!driverResult.rows[0]) return null;
+      if (lockedOrder.branch_id != null) {
+        const membershipResult = await tx.execute(sql`
+          SELECT id FROM driver_branch_memberships
+          WHERE driver_id = ${candidate.id} AND branch_id = ${lockedOrder.branch_id} AND active = true
+          FOR UPDATE
+        `);
+        if (!membershipResult.rows[0]) return null;
+      }
 
       const currentActive = await tx
         .select({
           orderId: orderDriverAssignmentsTable.orderId,
           assignmentStatus: orderDriverAssignmentsTable.status,
           customerAddress: ordersTable.customerAddress,
+          branchId: ordersTable.branchId,
         })
         .from(orderDriverAssignmentsTable)
         .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
@@ -678,7 +1001,11 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         if (
           currentActive.length === 0 ||
           currentActive.length >= AUTO_BATCH_MAX_ACTIVE_ORDERS ||
-          currentActive.some(active => active.assignmentStatus !== "assigned")
+          currentActive.some(active => active.assignmentStatus !== "assigned") ||
+          !activeOrdersCanBatchForOrderBranch(
+            lockedOrder.branch_id,
+            currentActive.map(active => active.branchId),
+          )
         ) {
           return null;
         }
@@ -699,8 +1026,8 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
         if (!hasFreshDriverGps) return null;
 
         const driverRestaurantDistanceKm = haversineKmServer(
-          AUTO_RESTAURANT_LAT,
-          AUTO_RESTAURANT_LNG,
+          dispatchOrigin.lat,
+          dispatchOrigin.lng,
           currentDriver.lastLat!,
           currentDriver.lastLng!,
         );
@@ -756,8 +1083,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
   }
 
   // 5. Only when no free driver could be assigned, consider a conservative
-  // two-order batch. Refresh active assignments after the free-driver attempts
-  // so concurrent requests cannot make a decision from an old busy/free state.
+  // two-order batch.
   if (!assignedDriver && !existingDriver) {
     const [targetOrder] = await db
       .select({ customerAddress: ordersTable.customerAddress })
@@ -772,6 +1098,7 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
           driverId: orderDriverAssignmentsTable.driverId,
           assignmentStatus: orderDriverAssignmentsTable.status,
           customerAddress: ordersTable.customerAddress,
+          branchId: ordersTable.branchId,
         })
         .from(orderDriverAssignmentsTable)
         .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
@@ -784,7 +1111,12 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
       for (const active of currentActiveAssigns) {
         const coordinates = parseOrderCoordinates(active.customerAddress);
         const previous = activeByDriver.get(active.driverId);
-        if (active.assignmentStatus !== "assigned" || !coordinates || previous === null) {
+        if (
+          active.assignmentStatus !== "assigned" ||
+          !coordinates ||
+          previous === null ||
+          !activeOrdersCanBatchForOrderBranch(dispatchOrder.branchId, [active.branchId])
+        ) {
           activeByDriver.set(active.driverId, null);
         } else {
           activeByDriver.set(active.driverId, [...(previous ?? []), coordinates]);
@@ -886,9 +1218,10 @@ router.post("/orders/:id/auto-assign-driver", async (req, res) => {
 });
 
 // ── DELETE /orders/:id/assign-driver ─────────────────────────────────────────
-router.delete("/orders/:id/assign-driver", async (req, res) => {
-  const orderId = parseInt(req.params.id);
+router.delete("/orders/:id/assign-driver", requireDashboardUser, async (req, res) => {
+  const orderId = parseInt(String(req.params.id));
   if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  if (!await authorizeDashboardOrder(res, orderId)) return;
   await db.delete(orderDriverAssignmentsTable).where(eq(orderDriverAssignmentsTable.orderId, orderId));
 
   // Revert an unassigned order that was "out_for_delivery" back to "ready"
@@ -904,6 +1237,11 @@ router.delete("/orders/:id/assign-driver", async (req, res) => {
 router.put("/orders/:id/driver-status", async (req, res) => {
   const orderId = parseInt(req.params.id);
   if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const dashboardActor = await resolveOptionalDashboardActor(req);
+  if (dashboardActor && dashboardActor.role !== "admin" &&
+      !await orderBelongsToBranches(orderId, dashboardActor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
   const { status } = req.body;
   if (!["assigned", "picked_up", "delivered"].includes(status)) {
     res.status(400).json({ error: "حالة غير صحيحة" }); return;
@@ -992,6 +1330,10 @@ router.post("/orders/:id/driver-arrived", async (req, res) => {
 router.get("/orders/:id/assignment", async (req, res) => {
   const orderId = parseInt(req.params.id);
   if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+  const actor = await resolveOptionalDashboardActor(req);
+  if (actor && actor.role !== "admin" && !await orderBelongsToBranches(orderId, actor.branchIds)) {
+    res.status(403).json({ error: "غير مصرح لهذا الفرع" }); return;
+  }
   const [row] = await db
     .select({ assignment: orderDriverAssignmentsTable, driver: deliveryDriversTable })
     .from(orderDriverAssignmentsTable)
@@ -1052,7 +1394,8 @@ router.post("/orders/:id/driver-rating", async (req, res) => {
 });
 
 // ── GET /ratings/drivers ──────────────────────────────────────────────────────
-router.get("/ratings/drivers", async (_req, res) => {
+router.get("/ratings/drivers", async (req, res) => {
+  const actor = await resolveOptionalDashboardActor(req);
   const rows = await db.execute(sql`
     SELECT
       d.id,
@@ -1081,7 +1424,11 @@ router.get("/ratings/drivers", async (_req, res) => {
     GROUP BY d.id, d.name, d.phone, d.photo_url, d.active
     ORDER BY "avgStars" DESC NULLS LAST, "completedDeliveries" DESC
   `);
-  res.json(rows.rows);
+  if (!actor || actor.role === "admin") { res.json(rows.rows); return; }
+  const allowed = new Set((await db.select({ driverId: driverBranchMembershipsTable.driverId })
+    .from(driverBranchMembershipsTable)
+    .where(actor.branchIds.length ? inArray(driverBranchMembershipsTable.branchId, actor.branchIds) : sql`false`)).map(row => row.driverId));
+  res.json(rows.rows.filter((row: any) => allowed.has(Number(row.id))));
 });
 
 // ── GET /settings/ui-density ──────────────────────────────────────────────────
