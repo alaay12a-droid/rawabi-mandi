@@ -194,7 +194,7 @@ h1{text-align:center;font-size:18px;font-weight:800;color:#8B4513;margin-bottom:
 .numeric-cell{text-align:center;direction:ltr;white-space:nowrap}.item-name-cell{text-align:right;line-height:1.35;overflow:hidden;word-break:normal;overflow-wrap:normal}.item-name-cell>span{display:-webkit-box;max-height:2.7em;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;word-break:normal;overflow-wrap:normal}
 .item-modifiers{display:block;margin-top:2px;color:#666;font-size:9.5px;font-weight:400;line-height:1.3;white-space:normal;word-break:normal;overflow-wrap:normal}
 hr{border:none;border-top:1px dashed #bbb;margin:8px 0}
-.total{font-size:16px;font-weight:800;text-align:left}@media print{body{padding:5mm}.items-table{width:72mm;max-width:72mm;margin-inline:-5mm}.items-table col.item-name-col{width:32mm}.items-table col.unit-price-col{width:17mm}.items-table col.quantity-col{width:9mm}.items-table col.total-col{width:14mm}}</style></head><body>
+.total{font-size:16px;font-weight:800;text-align:left}@media print{body{padding:5mm}.items-table{width:100%;max-width:100%;margin-inline:0}.items-table col.item-name-col{width:25mm}.items-table col.unit-price-col{width:14mm}.items-table col.quantity-col{width:10mm}.items-table col.total-col{width:13mm}}</style></head><body>
 <h1>روابي المندي للمذاق فن وأصول</h1>
 <div class="sub">تبوك، الروضة، 47711 — المملكة العربية السعودية</div>
 <div class="sub">الرقم الضريبي: 302282730200003</div>
