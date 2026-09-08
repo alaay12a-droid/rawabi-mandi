@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db, branchesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
+import { requireDashboardAdmin } from "./dashboard-auth";
 
 const router = Router();
 
@@ -27,7 +28,7 @@ router.get("/branches", async (_req, res) => {
 });
 
 // ── POST /branches ────────────────────────────────────────────────────────────
-router.post("/branches", async (req, res) => {
+router.post("/branches", requireDashboardAdmin, async (req, res) => {
   const parsed = branchSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   const [branch] = await db
@@ -48,9 +49,9 @@ router.post("/branches", async (req, res) => {
 });
 
 // ── PUT /branches/:id ─────────────────────────────────────────────────────────
-router.put("/branches/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.put("/branches/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   const parsed = branchSchema.partial().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   const [branch] = await db
@@ -73,9 +74,9 @@ router.put("/branches/:id", async (req, res) => {
 });
 
 // ── DELETE /branches/:id ──────────────────────────────────────────────────────
-router.delete("/branches/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.delete("/branches/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   await db.delete(branchesTable).where(eq(branchesTable.id, id));
   res.json({ ok: true });
 });

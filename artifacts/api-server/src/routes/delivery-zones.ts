@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { db, deliveryZonesTable } from "@workspace/db";
+import { db, deliveryZonesTable, branchesTable } from "@workspace/db";
 import { eq, asc } from "drizzle-orm";
 import { z } from "zod";
+import { requireDashboardAdmin } from "./dashboard-auth";
 
 const router = Router();
 
@@ -72,31 +73,48 @@ const zoneSchema = z.object({
   minOrder: z.number().int().min(0),
   enabled: z.boolean().optional().default(true),
   sortOrder: z.number().int().optional().default(0),
+  branchId: z.number().int().positive().nullable().optional(),
 });
 
-router.post("/delivery-zones", async (req, res) => {
+router.post("/delivery-zones", requireDashboardAdmin, async (req, res) => {
   const parsed = zoneSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "بيانات غير صحيحة", details: parsed.error.flatten() });
     return;
   }
-  const { name, polygon, deliveryFee, minOrder, enabled, sortOrder } = parsed.data;
+  const { name, polygon, deliveryFee, minOrder, enabled, sortOrder, branchId } = parsed.data;
+  if (branchId !== undefined && branchId !== null) {
+    const [branch] = await db
+      .select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(eq(branchesTable.id, branchId))
+      .limit(1);
+    if (!branch) { res.status(400).json({ error: "الفرع غير موجود" }); return; }
+  }
   const [zone] = await db
     .insert(deliveryZonesTable)
-    .values({ name, polygon, deliveryFee, minOrder, enabled, sortOrder })
+    .values({ name, polygon, deliveryFee, minOrder, enabled, sortOrder, branchId: branchId ?? null })
     .returning();
   res.status(201).json(zone);
 });
 
-router.put("/delivery-zones/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.put("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
 
   const patchSchema = zoneSchema.partial();
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "بيانات غير صحيحة" });
     return;
+  }
+  if (parsed.data.branchId !== undefined && parsed.data.branchId !== null) {
+    const [branch] = await db
+      .select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(eq(branchesTable.id, parsed.data.branchId))
+      .limit(1);
+    if (!branch) { res.status(400).json({ error: "الفرع غير موجود" }); return; }
   }
   const [zone] = await db
     .update(deliveryZonesTable)
@@ -107,9 +125,9 @@ router.put("/delivery-zones/:id", async (req, res) => {
   res.json(zone);
 });
 
-router.delete("/delivery-zones/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.delete("/delivery-zones/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   await db.delete(deliveryZonesTable).where(eq(deliveryZonesTable.id, id));
   res.json({ ok: true });
 });

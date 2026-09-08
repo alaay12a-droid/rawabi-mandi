@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { db, deliveryDriversTable, orderDriverAssignmentsTable, ordersTable, appSettingsTable, messagesTable, driverRatingsTable } from "@workspace/db";
+import { db, deliveryDriversTable, orderDriverAssignmentsTable, ordersTable, appSettingsTable, messagesTable, driverRatingsTable, driverBranchMembershipsTable, branchesTable } from "@workspace/db";
 import { eq, desc, and, gte, lt, ne, sql, inArray, notInArray, isNotNull, or, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { sendPushToDriver, sendPushToToken, sendPushToCashiers } from "../lib/sendPushNotification.js";
 import { logger } from "../lib/logger.js";
+import { requireDashboardAdmin } from "./dashboard-auth";
 
 const router = Router();
 
@@ -58,7 +59,7 @@ router.get("/drivers", async (_req, res) => {
 });
 
 // ── POST /drivers ─────────────────────────────────────────────────────────────
-router.post("/drivers", async (req, res) => {
+router.post("/drivers", requireDashboardAdmin, async (req, res) => {
   const parsed = driverSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   try {
@@ -79,9 +80,9 @@ router.post("/drivers", async (req, res) => {
 });
 
 // ── PUT /drivers/:id ──────────────────────────────────────────────────────────
-router.put("/drivers/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.put("/drivers/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   const parsed = driverSchema.partial().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
   try {
@@ -96,13 +97,132 @@ router.put("/drivers/:id", async (req, res) => {
 });
 
 // ── DELETE /drivers/:id ───────────────────────────────────────────────────────
-router.delete("/drivers/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+router.delete("/drivers/:id", requireDashboardAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
   await db.delete(messagesTable).where(eq(messagesTable.driverId, id));
   await db.delete(orderDriverAssignmentsTable).where(eq(orderDriverAssignmentsTable.driverId, id));
   await db.delete(deliveryDriversTable).where(eq(deliveryDriversTable.id, id));
   res.json({ ok: true });
+});
+
+const membershipSchema = z.object({
+  branchId: z.number().int().positive(),
+});
+
+const membershipActiveSchema = z.object({
+  active: z.boolean(),
+});
+
+async function driverExists(driverId: number): Promise<boolean> {
+  const [driver] = await db
+    .select({ id: deliveryDriversTable.id })
+    .from(deliveryDriversTable)
+    .where(eq(deliveryDriversTable.id, driverId))
+    .limit(1);
+  return Boolean(driver);
+}
+
+// ── GET /drivers/:driverId/branches ───────────────────────────────────────────
+// Memberships may be inactive; callers receive their joined branch information.
+router.get("/drivers/:driverId/branches", async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+    res.status(400).json({ error: "معرّف المندوب غير صحيح" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+
+  const rows = await db
+    .select({ membership: driverBranchMembershipsTable, branch: branchesTable })
+    .from(driverBranchMembershipsTable)
+    .innerJoin(branchesTable, eq(driverBranchMembershipsTable.branchId, branchesTable.id))
+    .where(eq(driverBranchMembershipsTable.driverId, driverId))
+    .orderBy(branchesTable.name);
+  res.json(rows.map(({ membership, branch }) => ({ ...membership, branch })));
+});
+
+// ── POST /drivers/:driverId/branches ──────────────────────────────────────────
+// A matching inactive membership is reactivated rather than creating a duplicate.
+router.post("/drivers/:driverId/branches", requireDashboardAdmin, async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+    res.status(400).json({ error: "معرّف المندوب غير صحيح" });
+    return;
+  }
+  const parsed = membershipSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات غير صحيحة" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+  const [branch] = await db
+    .select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(eq(branchesTable.id, parsed.data.branchId))
+    .limit(1);
+  if (!branch) {
+    res.status(404).json({ error: "فرع غير موجود" });
+    return;
+  }
+
+  const [membership] = await db
+    .insert(driverBranchMembershipsTable)
+    .values({ driverId, branchId: parsed.data.branchId, active: true })
+    .onConflictDoUpdate({
+      target: [driverBranchMembershipsTable.driverId, driverBranchMembershipsTable.branchId],
+      set: { active: true },
+    })
+    .returning();
+  res.status(201).json(membership);
+});
+
+// ── PUT /drivers/:driverId/branches/:branchId ─────────────────────────────────
+router.put("/drivers/:driverId/branches/:branchId", requireDashboardAdmin, async (req, res) => {
+  const driverId = Number(req.params.driverId);
+  const branchId = Number(req.params.branchId);
+  if (!Number.isInteger(driverId) || driverId <= 0 || !Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: "معرّف غير صحيح" });
+    return;
+  }
+  const parsed = membershipActiveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات غير صحيحة" });
+    return;
+  }
+  if (!await driverExists(driverId)) {
+    res.status(404).json({ error: "مندوب غير موجود" });
+    return;
+  }
+  const [branch] = await db
+    .select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(eq(branchesTable.id, branchId))
+    .limit(1);
+  if (!branch) {
+    res.status(404).json({ error: "فرع غير موجود" });
+    return;
+  }
+
+  const [membership] = await db
+    .update(driverBranchMembershipsTable)
+    .set({ active: parsed.data.active })
+    .where(and(
+      eq(driverBranchMembershipsTable.driverId, driverId),
+      eq(driverBranchMembershipsTable.branchId, branchId),
+    ))
+    .returning();
+  if (!membership) {
+    res.status(404).json({ error: "ارتباط المندوب بالفرع غير موجود" });
+    return;
+  }
+  res.json(membership);
 });
 
 // ── PUT /drivers/:id/online-status ───────────────────────────────────────────

@@ -21,7 +21,8 @@ interface ApiMenuItem { id: string; name: string; nameEn?: string; category: str
 interface ApiOccasion { id: string; name: string; description?: string; imageUrl?: string; isActive: boolean; }
 interface ApiBanner { bannerId: string; imageUrl: string; title?: string | null; active: boolean; createdAt: string; }
 interface ApiCombo { id: string; name: string; price: number; description?: string; imageUrl?: string; isAvailable: boolean; components: { name: string; quantity: number }[]; }
-interface ApiZone { id: number; name: string; deliveryFee: number; minOrder: number; enabled: boolean; polygon?: LatLng[]; sortOrder?: number; }
+interface ApiZone { id: number; name: string; deliveryFee: number; minOrder: number; enabled: boolean; polygon?: LatLng[]; sortOrder?: number; branchId?: number | null; }
+interface ApiBranch { id: number; name: string; active: boolean; deliveryEnabled: boolean; pickupEnabled: boolean; }
 interface ReferralSettings { enabled: boolean; ratePerReferral: number; }
 interface ReferralRow { id: number; referrerName: string; referrerPhone: string; referredPhone: string; rewardAmount: number; createdAt: string; }
 interface BranchHours { dayOfWeek: number; isOpen: boolean; openTime: string; closeTime: string; }
@@ -96,10 +97,11 @@ export default function Admin() {
 
   // ── Zones ──
   const [zones, setZones] = useState<ApiZone[]>([]);
+  const [zoneBranches, setZoneBranches] = useState<ApiBranch[]>([]);
   const [zonesLoading, setZonesLoading] = useState(false);
   const [showZoneForm, setShowZoneForm] = useState(false);
   const [editingZone, setEditingZone] = useState<ApiZone | null>(null);
-  const [zoneForm, setZoneForm] = useState({ name: "", fee: "", minOrder: "" });
+  const [zoneForm, setZoneForm] = useState({ name: "", fee: "", minOrder: "", branchId: "unassigned" });
   const [zonePolygon, setZonePolygon] = useState<LatLng[]>([]);
   const [zoneSaving, setZoneSaving] = useState(false);
   // ── Free delivery threshold ──
@@ -207,12 +209,14 @@ export default function Admin() {
   const loadZones = async () => {
     setZonesLoading(true);
     try {
-      const [d, app, drvEnabled] = await Promise.all([
+      const [d, app, drvEnabled, branches] = await Promise.all([
         apiGet<ApiZone[]>("/delivery-zones"),
         apiGet<{ freeDeliveryThreshold: number }>("/settings/appearance"),
         apiGet<{ enabled: boolean }>("/settings/drivers-enabled").catch(() => ({ enabled: false })),
+        apiGet<ApiBranch[]>("/branches"),
       ]);
       setZones(d);
+      setZoneBranches(branches);
       const thr = app.freeDeliveryThreshold ?? 0;
       setFreeDeliveryEnabled(thr > 0);
       setFreeDeliveryThresholdInput(thr > 0 ? String(thr) : "100");
@@ -442,8 +446,8 @@ export default function Admin() {
   };
 
   // ── Zones ─────────────────────────────────────────────────────────────────
-  const openAddZone = () => { setEditingZone(null); setZoneForm({ name: "", fee: "", minOrder: "" }); setZonePolygon([]); setShowZoneForm(true); };
-  const openEditZone = (z: ApiZone) => { setEditingZone(z); setZoneForm({ name: z.name, fee: String(z.deliveryFee / 100), minOrder: String(z.minOrder / 100) }); setZonePolygon(z.polygon ?? []); setShowZoneForm(true); };
+  const openAddZone = () => { setEditingZone(null); setZoneForm({ name: "", fee: "", minOrder: "", branchId: "unassigned" }); setZonePolygon([]); setShowZoneForm(true); };
+  const openEditZone = (z: ApiZone) => { setEditingZone(z); setZoneForm({ name: z.name, fee: String(z.deliveryFee / 100), minOrder: String(z.minOrder / 100), branchId: z.branchId != null ? String(z.branchId) : "unassigned" }); setZonePolygon(z.polygon ?? []); setShowZoneForm(true); };
   const handleSaveZone = async () => {
     if (!zoneForm.name.trim()) return;
     if (!editingZone && zonePolygon.length < 3) { toast({ title: "ارسم حدود المنطقة على الخريطة (3 نقاط على الأقل)", variant: "destructive" }); return; }
@@ -452,6 +456,7 @@ export default function Admin() {
       name: zoneForm.name,
       deliveryFee: Math.round(parseFloat(zoneForm.fee || "0") * 100),
       minOrder: Math.round(parseFloat(zoneForm.minOrder || "0") * 100),
+      branchId: zoneForm.branchId === "unassigned" ? null : parseInt(zoneForm.branchId, 10),
     };
     if (zonePolygon.length >= 3) payload.polygon = zonePolygon;
     try {
@@ -1072,7 +1077,9 @@ export default function Admin() {
           </div>
           {zonesLoading ? <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-amber-500" /></div> : (
             <div className="space-y-2">
-              {zones.map(z => (
+              {zones.map(z => {
+                const branch = zoneBranches.find(b => b.id === z.branchId);
+                return (
                 <div key={z.id} className="bg-card border border-border rounded-2xl p-3 flex items-center gap-3">
                   <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center flex-shrink-0">
                     <MapPin className="h-5 w-5 text-blue-600" />
@@ -1083,6 +1090,14 @@ export default function Admin() {
                       <span>رسوم: {fmtPrice(z.deliveryFee / 100)}</span>
                       <span>الحد الأدنى: {fmtPrice(z.minOrder / 100)}</span>
                       {z.polygon && z.polygon.length > 0 && <span className="text-green-600">✓ {z.polygon.length} نقطة</span>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-xs">
+                      <Badge variant="outline" className="text-[11px]">
+                        الفرع: {branch ? branch.name : "غير معيّنة"}
+                      </Badge>
+                      {branch && !branch.active && <span className="text-amber-600">⚠ الفرع موقوف</span>}
+                      {branch && !branch.deliveryEnabled && <span className="text-amber-600">⚠ التوصيل غير مفعّل للفرع</span>}
+                      {z.branchId != null && !branch && <span className="text-destructive">⚠ الفرع غير موجود</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1095,7 +1110,8 @@ export default function Admin() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {zones.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
                   <MapPin className="h-10 w-10 opacity-20" />
@@ -1532,6 +1548,26 @@ export default function Admin() {
               <Input placeholder="اسم المنطقة" value={zoneForm.name} onChange={e => setZoneForm(f => ({ ...f, name: e.target.value }))} className="col-span-2" />
               <Input type="number" placeholder="رسوم التوصيل (ريال)" value={zoneForm.fee} onChange={e => setZoneForm(f => ({ ...f, fee: e.target.value }))} dir="ltr" />
               <Input type="number" placeholder="الحد الأدنى للطلب (ريال)" value={zoneForm.minOrder} onChange={e => setZoneForm(f => ({ ...f, minOrder: e.target.value }))} dir="ltr" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">الفرع المسؤول (اختياري)</label>
+              <Select value={zoneForm.branchId} onValueChange={branchId => setZoneForm(f => ({ ...f, branchId }))}>
+                <SelectTrigger><SelectValue placeholder="اختر فرعاً" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">غير معيّنة لأي فرع</SelectItem>
+                  {zoneBranches.map(branch => (
+                    <SelectItem key={branch.id} value={String(branch.id)}>
+                      {branch.name} — {branch.active ? "نشط" : "موقوف"} / توصيل {branch.deliveryEnabled ? "مفعّل" : "موقوف"} / استلام {branch.pickupEnabled ? "مفعّل" : "موقوف"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {zoneForm.branchId !== "unassigned" && (() => {
+                const branch = zoneBranches.find(b => b.id === Number(zoneForm.branchId));
+                return branch && (!branch.active || !branch.deliveryEnabled) ? (
+                  <p className="text-xs text-amber-600">⚠ {branch.active ? "التوصيل غير مفعّل لهذا الفرع" : "هذا الفرع موقوف"}</p>
+                ) : null;
+              })()}
             </div>
             <div>
               <div className="flex items-center justify-between mb-1.5">

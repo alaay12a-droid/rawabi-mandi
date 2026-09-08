@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { db } from "@workspace/db";
@@ -36,6 +36,53 @@ function verifyToken(token: string): { userId: number; role: string } | null {
     return null;
   }
 }
+
+/**
+ * Require a current dashboard admin session authenticated by the existing
+ * httpOnly dashboard_token cookie.
+ */
+export const requireDashboardAdmin: RequestHandler = async (req, res, next) => {
+  const origin = req.get("origin");
+  if (origin) {
+    let originHost: string;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      res.status(403).json({ error: "مصدر الطلب غير مسموح" });
+      return;
+    }
+    const requestHost = req.get("host");
+    if (!requestHost || originHost !== requestHost) {
+      res.status(403).json({ error: "مصدر الطلب غير مسموح" });
+      return;
+    }
+  }
+
+  const token = req.cookies?.[COOKIE_NAME] as string | undefined;
+  if (!token) {
+    res.status(401).json({ error: "غير مصرح" });
+    return;
+  }
+
+  const payload = verifyToken(token);
+  if (!payload) {
+    res.status(401).json({ error: "جلسة منتهية" });
+    return;
+  }
+
+  const [user] = await db
+    .select({ id: dashboardUsersTable.id, role: dashboardUsersTable.role })
+    .from(dashboardUsersTable)
+    .where(eq(dashboardUsersTable.id, payload.userId))
+    .limit(1);
+
+  if (!user || user.role !== "admin") {
+    res.status(403).json({ error: "صلاحيات المشرف مطلوبة" });
+    return;
+  }
+
+  next();
+};
 
 router.post("/dashboard/auth/login", async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
