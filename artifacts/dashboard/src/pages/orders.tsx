@@ -818,12 +818,12 @@ export default function Orders() {
               <User size={12} />
               المندوب: {aRow.driverName}
             </div>
-            {!driverPickedUp && !["done","cancelled"].includes(order.status) && (
+            {!["done","cancelled"].includes(order.status) && (
               <button
                 onClick={e => { e.stopPropagation(); setAssigningOrder(order); }}
                 style={{ background: "none", border: `1px solid ${C.blue}55`, borderRadius: 6, padding: "3px 8px", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
               >
-                تغيير
+                تغيير المندوب
               </button>
             )}
           </div>
@@ -883,12 +883,12 @@ export default function Orders() {
                   المندوب: {aRow.driverName}
                   {driverPickedUp && <span style={{ fontSize: 11, opacity: 0.8 }}>— في الطريق</span>}
                   {!driverPickedUp && aRow.status === "assigned" && <span style={{ fontSize: 11, opacity: 0.8 }}>— بانتظار الاستلام</span>}
-                  {!driverPickedUp && !["done","cancelled"].includes(order.status) && (
+                  {!["done","cancelled"].includes(order.status) && (
                     <button
                       onClick={() => setAssigningOrder(order)}
                       style={{ marginRight: "auto", background: "none", border: `1px solid ${C.blue}55`, borderRadius: 6, padding: "2px 8px", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
                     >
-                      تغيير
+                      تغيير المندوب
                     </button>
                   )}
                 </div>
@@ -976,7 +976,7 @@ export default function Orders() {
                   <Printer size={15} />
                   طباعة
                 </button>
-                {isDelivery && !["done","cancelled"].includes(order.status) && !driverPickedUp && (
+                {isDelivery && !["done","cancelled"].includes(order.status) && (
                   <button
                     onClick={() => handleCancelOrder(order)}
                     style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: C.surface, border: `1px solid ${C.border}`, color: "#F7A9A9", borderRadius: 10, padding: 10, fontSize: 12.5, fontFamily: "inherit", fontWeight: 600, cursor: "pointer" }}
