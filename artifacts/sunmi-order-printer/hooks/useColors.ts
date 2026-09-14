@@ -1,0 +1,6 @@
+import { useColorScheme } from 'react-native';
+import colors from '../constants/colors';
+
+export function useColors() {
+  return colors.light; // Forced light mode as per requirements
+}

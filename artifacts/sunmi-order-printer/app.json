@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "طابعة الطلبات المستقلة",
+    "slug": "sunmi-order-printer",
+    "owner": "021837ala",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "sunmi-order-printer",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.standalone.sunmiorderprinter",
+      "versionCode": 1
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": ["expo-router", "expo-av"],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6e2c8706-101d-4a4f-8e09-7cf3c0acd65f"
+      }
+    }
+  }
+}
