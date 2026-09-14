@@ -7,7 +7,7 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "credentialsSource": "local",
+      "credentialsSource": "remote",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://rawabi-mandi-e5rz.onrender.com"
       },
@@ -17,7 +17,7 @@
     },
     "production": {
       "distribution": "internal",
-      "credentialsSource": "local",
+      "credentialsSource": "remote",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://rawabi-mandi-e5rz.onrender.com"
       },
