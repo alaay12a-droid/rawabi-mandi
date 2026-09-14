@@ -83,6 +83,52 @@ function parseOrderCoordinates(address: string | null): { lat: number; lng: numb
 
 const cleanPhone = (p: string) => p.replace(/[^\d+]/g, "").trim();
 
+const AUTO_RESTAURANT_LAT = 28.410769;
+const AUTO_RESTAURANT_LNG = 36.532353;
+const DRIVER_GPS_STALE_MS = 15 * 60 * 1000;
+const PREPARING_ASSIGNMENT_LOCK_ID = 741_925_311;
+
+async function getAvailableDrivers() {
+  const cutoff = new Date(Date.now() - DRIVER_GPS_STALE_MS);
+  const onlineDrivers = await db
+    .select()
+    .from(deliveryDriversTable)
+    .where(and(
+      eq(deliveryDriversTable.isOnline, true),
+      eq(deliveryDriversTable.active, true),
+    ));
+
+  const activeAssignments = await db
+    .select({ driverId: orderDriverAssignmentsTable.driverId })
+    .from(orderDriverAssignmentsTable)
+    .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
+    .where(and(
+      inArray(orderDriverAssignmentsTable.status, ["assigned", "picked_up"]),
+      notInArray(ordersTable.status, ["done", "cancelled"]),
+    ));
+
+  const busyIds = new Set(activeAssignments.map(assignment => assignment.driverId));
+  return onlineDrivers
+    .filter(driver => !busyIds.has(driver.id))
+    .map(driver => {
+      const hasRecentGps =
+        driver.lastLat != null &&
+        driver.lastLng != null &&
+        driver.lastLocationAt != null &&
+        driver.lastLocationAt >= cutoff;
+      const distanceKm = hasRecentGps
+        ? haversineKmServer(
+            AUTO_RESTAURANT_LAT,
+            AUTO_RESTAURANT_LNG,
+            driver.lastLat!,
+            driver.lastLng!,
+          )
+        : null;
+      return { ...driver, distanceKm };
+    })
+    .sort((a, b) => (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY));
+}
+
 const driverSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
@@ -107,6 +153,18 @@ router.get("/drivers", async (req, res) => {
     .orderBy(desc(deliveryDriversTable.createdAt));
   // A driver can belong to several authorized branches; preserve one driver row.
   res.json(Array.from(new Map(drivers.map(({ driver }) => [driver.id, driver])).values()));
+});
+
+// ── GET /drivers/available ────────────────────────────────────────────────────
+router.get("/drivers/available", async (_req, res) => {
+  const drivers = await getAvailableDrivers();
+  res.json(drivers.map(driver => ({
+    id: driver.id,
+    name: driver.name,
+    phone: driver.phone,
+    photoUrl: driver.photoUrl,
+    distanceKm: driver.distanceKm,
+  })));
 });
 
 // ── POST /drivers ─────────────────────────────────────────────────────────────
@@ -773,6 +831,181 @@ router.post("/orders/:id/assign-driver", requireDashboardUser, async (req, res) 
   } catch (postErr) {
     // Log but never re-throw — response is already sent.
     logger.error({ err: postErr, orderId }, "assign-driver: post-response update failed");
+  }
+});
+
+// ── POST /orders/:id/assign-driver-preparing ─────────────────────────────────
+// Assigns an available driver while preserving the order's preparing status.
+// Omit driverId to auto-select the closest available driver.
+router.post("/orders/:id/assign-driver-preparing", async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  if (isNaN(orderId)) { res.status(400).json({ error: "معرّف غير صحيح" }); return; }
+
+  const parsedBody = z.object({
+    driverId: z.coerce.number().int().positive().optional(),
+  }).safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    res.status(400).json({ error: "معرّف المندوب غير صحيح" });
+    return;
+  }
+
+  const [order] = await db
+    .select({
+      id: ordersTable.id,
+      status: ordersTable.status,
+      orderType: ordersTable.orderType,
+      dailyNumber: ordersTable.dailyNumber,
+      customerName: ordersTable.customerName,
+      customerPushToken: ordersTable.customerPushToken,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId))
+    .limit(1);
+
+  if (!order) { res.status(404).json({ error: "الطلب غير موجود" }); return; }
+  if (order.orderType !== "delivery") {
+    res.status(400).json({ error: "طلبات الاستلام الشخصي لا تحتاج إلى مندوب" });
+    return;
+  }
+  if (order.status !== "preparing") {
+    res.status(409).json({ error: "يجب أن يكون الطلب قيد التحضير قبل تعيين المندوب" });
+    return;
+  }
+
+  const [existingAssignment] = await db
+    .select({
+      driverId: orderDriverAssignmentsTable.driverId,
+      driverName: deliveryDriversTable.name,
+    })
+    .from(orderDriverAssignmentsTable)
+    .innerJoin(deliveryDriversTable, eq(orderDriverAssignmentsTable.driverId, deliveryDriversTable.id))
+    .where(eq(orderDriverAssignmentsTable.orderId, orderId))
+    .limit(1);
+  if (existingAssignment) {
+    res.json({
+      ok: true,
+      driverId: existingAssignment.driverId,
+      driverName: existingAssignment.driverName,
+      alreadyAssigned: true,
+      orderStatus: order.status,
+    });
+    return;
+  }
+
+  const availableDrivers = await getAvailableDrivers();
+  const selectedDriver = parsedBody.data.driverId
+    ? availableDrivers.find(driver => driver.id === parsedBody.data.driverId)
+    : availableDrivers[0];
+
+  if (!selectedDriver) {
+    res.status(409).json({
+      error: parsedBody.data.driverId
+        ? "المندوب المختار غير متاح حاليًا"
+        : "لا يوجد مندوب متاح حاليًا",
+    });
+    return;
+  }
+
+  const assignmentResult = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${PREPARING_ASSIGNMENT_LOCK_ID})`);
+
+    const [currentOrder] = await tx
+      .select({ status: ordersTable.status, orderType: ordersTable.orderType })
+      .from(ordersTable)
+      .where(eq(ordersTable.id, orderId))
+      .limit(1);
+    if (!currentOrder || currentOrder.status !== "preparing" || currentOrder.orderType !== "delivery") {
+      return { kind: "order_changed" as const };
+    }
+
+    const [currentAssignment] = await tx
+      .select({
+        assignment: orderDriverAssignmentsTable,
+        driver: deliveryDriversTable,
+      })
+      .from(orderDriverAssignmentsTable)
+      .innerJoin(deliveryDriversTable, eq(orderDriverAssignmentsTable.driverId, deliveryDriversTable.id))
+      .where(eq(orderDriverAssignmentsTable.orderId, orderId))
+      .limit(1);
+    if (currentAssignment) {
+      return {
+        kind: "assigned" as const,
+        assignment: currentAssignment.assignment,
+        driver: currentAssignment.driver,
+        alreadyAssigned: true,
+      };
+    }
+
+    const [currentDriver] = await tx
+      .select()
+      .from(deliveryDriversTable)
+      .where(and(
+        eq(deliveryDriversTable.id, selectedDriver.id),
+        eq(deliveryDriversTable.active, true),
+        eq(deliveryDriversTable.isOnline, true),
+      ))
+      .limit(1);
+    if (!currentDriver) return { kind: "driver_unavailable" as const };
+
+    const [conflict] = await tx
+      .select({ id: orderDriverAssignmentsTable.id })
+      .from(orderDriverAssignmentsTable)
+      .innerJoin(ordersTable, eq(orderDriverAssignmentsTable.orderId, ordersTable.id))
+      .where(and(
+        eq(orderDriverAssignmentsTable.driverId, selectedDriver.id),
+        inArray(orderDriverAssignmentsTable.status, ["assigned", "picked_up"]),
+        notInArray(ordersTable.status, ["done", "cancelled"]),
+      ))
+      .limit(1);
+    if (conflict) return { kind: "driver_unavailable" as const };
+
+    const [created] = await tx
+      .insert(orderDriverAssignmentsTable)
+      .values({ orderId, driverId: currentDriver.id, status: "assigned" })
+      .returning();
+    return {
+      kind: "assigned" as const,
+      assignment: created,
+      driver: currentDriver,
+      alreadyAssigned: false,
+    };
+  });
+
+  if (assignmentResult.kind === "order_changed") {
+    res.status(409).json({ error: "لم يعد الطلب بحالة قيد التحضير" });
+    return;
+  }
+  if (assignmentResult.kind === "driver_unavailable") {
+    res.status(409).json({ error: "المندوب لم يعد متاحًا، حدّث القائمة واختر مندوبًا آخر" });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    driverId: assignmentResult.driver.id,
+    driverName: assignmentResult.driver.name,
+    alreadyAssigned: assignmentResult.alreadyAssigned,
+    orderStatus: order.status,
+  });
+
+  if (assignmentResult.alreadyAssigned) return;
+
+  sendPushToDriver(assignmentResult.driver.id, {
+    title: "🛵 طلب جديد!",
+    body: `طلب #${order.dailyNumber ?? orderId}${order.customerName ? ` — ${order.customerName}` : ""}`,
+    sound: "default",
+    data: { orderId: String(orderId), type: "new_assignment" },
+    channelId: "orders",
+  }).catch(() => {});
+
+  if (order.customerPushToken) {
+    sendPushToToken(order.customerPushToken, {
+      title: "🛵 تم تعيين مندوب لطلبك",
+      body: `جاري تجهيز طلبك رقم #${order.dailyNumber} وسيصل إليك قريباً`,
+      sound: "default",
+      data: { orderId: String(orderId), driverStatus: "assigned" },
+      channelId: "order-status",
+    }).catch(() => {});
   }
 });
 
@@ -1463,6 +1696,28 @@ router.put("/settings/drivers-enabled", async (req, res) => {
     .values({ key: "drivers_enabled", value: String(!!enabled) })
     .onConflictDoUpdate({ target: appSettingsTable.key, set: { value: String(!!enabled), updatedAt: new Date() } });
   res.json({ enabled: !!enabled });
+});
+
+// ── GET /settings/drivers-auto-assign ────────────────────────────────────────
+router.get("/settings/drivers-auto-assign", async (_req, res) => {
+  const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, "drivers_auto_assign"));
+  res.json({ enabled: row?.value === "true" });
+});
+
+// ── PUT /settings/drivers-auto-assign ────────────────────────────────────────
+router.put("/settings/drivers-auto-assign", async (req, res) => {
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "enabled must be boolean" });
+    return;
+  }
+  await db.insert(appSettingsTable)
+    .values({ key: "drivers_auto_assign", value: String(parsed.data.enabled) })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: { value: String(parsed.data.enabled), updatedAt: new Date() },
+    });
+  res.json({ enabled: parsed.data.enabled });
 });
 
 // ── GET /settings/commission-rate ─────────────────────────────────────────────
