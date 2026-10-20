@@ -1,0 +1,86 @@
+name: Sunmi Printer APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sunmi-printer-apk
+  cancel-in-progress: false
+
+jobs:
+  build-sunmi:
+    name: Build signed standalone Sunmi APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_PUBLIC_API_BASE_URL: https://rawabi-mandi-e5rz.onrender.com
+      SUNMI_NATIVE_DIR: ${{ runner.temp }}/sunmi-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.26.1"
+          run_install: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Prepare isolated printer project
+        run: node artifacts/sunmi-order-printer/scripts/prepare-native-build.cjs "$SUNMI_NATIVE_DIR"
+      - name: Install printer dependencies only
+        run: cd "$SUNMI_NATIVE_DIR" && pnpm install --no-frozen-lockfile
+      - name: Validate TypeScript and native identity
+        run: |
+          cd "$SUNMI_NATIVE_DIR"
+          pnpm exec tsc --noEmit
+          node -e "const c=require('./app.json').expo;if(c.name!=='چڤن'||c.slug!=='sunmi-order-printer'||c.android.package!=='com.standalone.sunmiorderprinter')throw Error('Unexpected app identity')"
+      - name: Generate Android native project
+        run: cd "$SUNMI_NATIVE_DIR" && pnpm exec expo prebuild --platform android --no-install
+      - name: Build signed release APK
+        env:
+          SUNMI_KEYSTORE_BASE64: ${{ secrets.SUNMI_KEYSTORE_BASE64 }}
+          SUNMI_KEYSTORE_PASSWORD: ${{ secrets.SUNMI_KEYSTORE_PASSWORD }}
+          SUNMI_KEY_ALIAS: ${{ secrets.SUNMI_KEY_ALIAS }}
+          SUNMI_KEY_PASSWORD: ${{ secrets.SUNMI_KEY_PASSWORD }}
+          SUNMI_KEYSTORE_FILE: ${{ runner.temp }}/sunmi-signing.jks
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false
+        run: |
+          node - <<'JS'
+          const fs=require('fs');
+          for(const k of ['SUNMI_KEYSTORE_BASE64','SUNMI_KEYSTORE_PASSWORD','SUNMI_KEY_ALIAS','SUNMI_KEY_PASSWORD']) {
+            if(!process.env[k])throw Error('Missing signing secret: '+k);
+          }
+          fs.writeFileSync(process.env.SUNMI_KEYSTORE_FILE,Buffer.from(process.env.SUNMI_KEYSTORE_BASE64,'base64'),{mode:0o600});
+          JS
+          cd "$SUNMI_NATIVE_DIR/android"
+          ./gradlew :app:assembleRelease --no-daemon --max-workers=2 \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
+            -I "$GITHUB_WORKSPACE/artifacts/sunmi-order-printer/scripts/sunmi-signing.gradle"
+      - name: Verify release and package APK
+        run: |
+          set -euo pipefail
+          APK="$SUNMI_NATIVE_DIR/android/app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | head -4
+          mkdir -p "$RUNNER_TEMP/sunmi-apk"
+          cp "$APK" "$RUNNER_TEMP/sunmi-apk/sunmi-printer.apk"
+          sha256sum "$RUNNER_TEMP/sunmi-apk/sunmi-printer.apk" > "$RUNNER_TEMP/sunmi-apk/SHA256SUMS.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sunmi-printer-apk
+          path: ${{ runner.temp }}/sunmi-apk/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sunmi-signing.jks"
