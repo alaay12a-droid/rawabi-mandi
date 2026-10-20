@@ -1,9 +1,12 @@
 node_modules/
 .expo/
+.cache/
+**/.cache/
 dist/
 web-build/
 server/
 *.log
+releases/*.apk
 .env
 .env.*
 !credentials.json

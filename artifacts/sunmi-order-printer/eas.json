@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "environment": "development",
       "developmentClient": true,
       "distribution": "internal",
       "credentialsSource": "remote",
@@ -19,6 +20,7 @@
       }
     },
     "production": {
+      "environment": "production",
       "distribution": "internal",
       "credentialsSource": "remote",
       "node": "22.14.0",

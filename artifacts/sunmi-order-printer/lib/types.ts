@@ -33,6 +33,8 @@ export interface Order {
   createdAt: string;
   branchId?: string | null;
   branchName?: string | null;
+  taxAmount?: number | null;
+  driverName?: string | null;
 }
 
 export interface DashboardUser {
@@ -44,21 +46,35 @@ export interface DashboardUser {
 
 export interface MenuItem {
   id: string;
+  itemId?: string;
   name: string;
   price: number;
   available: boolean;
   stock: number | null;
+  category?: string;
+  imageUrl?: string | null;
+  sortOrder?: number;
+  sizes?: unknown[];
+  options?: unknown[];
 }
 
 export interface BranchHours {
-  isOpen: boolean;
-  openingTime: string; // HH:mm
-  closingTime: string; // HH:mm
+  enabled: boolean;
+  days: Array<{ enabled: boolean; open: string; close: string }>;
 }
 
 export interface Settings {
   soundEnabled: boolean;
   autoAssignDrivers: boolean;
+  autoPrint: boolean;
+  paperWidth: 58 | 80;
+  copies: number;
+  kitchenCopy: boolean;
+  customerCopy: boolean;
+  keepAwake: boolean;
+  language: 'ar' | 'en';
+  storeName: string;
+  supportPhone: string;
 }
 
 export interface Driver {
@@ -76,4 +92,45 @@ export interface PrinterDiagnostic {
   status: 'connected' | 'disconnected' | 'error';
   paperStatus: 'ok' | 'low' | 'out';
   message: string;
+}
+
+export interface Conversation {
+  orderId: number;
+  lastText: string;
+  lastAt: string;
+  unread: number;
+  customerName?: string;
+  dailyNumber?: number;
+}
+
+export interface Message {
+  id: number;
+  orderId: number;
+  text: string;
+  fromCashier: boolean;
+  createdAt: string;
+  driverId?: number | null;
+  readAt?: string | null;
+}
+
+export interface Assignment {
+  assignment: { driverId: number; status: string; assignedAt: string };
+  driver: Driver | null;
+}
+
+export interface TerminalEvent {
+  id: string;
+  type: 'order' | 'message' | 'cancellation' | 'system';
+  title: string;
+  body: string;
+  orderId?: string;
+  createdAt: string;
+  read: boolean;
+}
+
+export interface OrderAction {
+  orderId: string;
+  kind: 'accepted' | 'rejected' | 'driver';
+  detail: string;
+  createdAt: string;
 }

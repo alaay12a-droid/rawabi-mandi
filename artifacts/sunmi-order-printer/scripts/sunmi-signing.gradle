@@ -1,0 +1,14 @@
+gradle.beforeProject { project ->
+    project.afterEvaluate {
+        if (project.plugins.hasPlugin('com.android.application')) {
+            def android = project.extensions.getByName('android')
+            def env = System.getenv()
+            def signing = android.signingConfigs.maybeCreate('sunmiOriginalRelease')
+            signing.storeFile = new File(env['SUNMI_KEYSTORE_FILE'])
+            signing.storePassword = env['SUNMI_KEYSTORE_PASSWORD']
+            signing.keyAlias = env['SUNMI_KEY_ALIAS']
+            signing.keyPassword = env['SUNMI_KEY_PASSWORD']
+            android.buildTypes.getByName('release').signingConfig = signing
+        }
+    }
+}

@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "روابي المندي",
+    "name": "چڤن",
     "slug": "sunmi-order-printer",
     "owner": "021837ala",
-    "version": "1.0.1",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "sunmi-order-printer",
@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.standalone.sunmiorderprinter",
-      "versionCode": 2,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive_icon.png",
         "backgroundColor": "#0F0A05"
@@ -29,8 +29,7 @@
     },
     "plugins": ["expo-router", "expo-av"],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     },
     "extra": {
       "eas": {

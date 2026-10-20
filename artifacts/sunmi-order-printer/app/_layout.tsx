@@ -1,25 +1,20 @@
 import React, { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { I18nManager } from 'react-native';
-import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  useFonts,
-} from '@expo-google-fonts/inter';
+import { LoginScreen } from '@/components/LoginScreen';
+import { ActivityIndicator, I18nManager, StyleSheet, View } from 'react-native';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, useFonts } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { PrintQueueProvider } from '../lib/PrintQueueContext';
 import { useColors } from '../hooks/useColors';
-import { AuthProvider, useAuth } from '../contexts/AuthContext';
-import { ActivityIndicator, View } from 'react-native';
+import { AuthProvider, useAuth } from '../lib/AuthContext';
+import { TerminalProvider } from '../lib/TerminalContext';
 
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync().catch((error) => {
+  console.warn('Unable to keep the splash screen visible:', error);
+});
 
 try {
   I18nManager.allowRTL(true);
@@ -28,39 +23,35 @@ try {
 
 const queryClient = new QueryClient();
 
-function RootLayoutNav() {
+function AuthGate() {
   const colors = useColors();
-  const { user, loading } = useAuth();
-  if (loading) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={colors.primary} /></View>;
-  
+  const auth = useAuth();
+  const loading = auth.loading;
+  if (loading) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+  if (!auth.user) return <LoginScreen />;
   return (
-    user ? (
-      <PrintQueueProvider>
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="login" />
-        </Stack>
-      </PrintQueueProvider>
-    ) : (
+    <TerminalProvider key={auth.user.id}>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-        <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
       </Stack>
-    )
+    </TerminalProvider>
   );
 }
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-  });
+  const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold });
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync().catch((error) => {
+        console.warn('Unable to hide the splash screen:', error);
+      });
     }
   }, [fontsLoaded, fontError]);
 
@@ -71,10 +62,8 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <GestureHandlerRootView>
-              <KeyboardProvider>
-                <RootLayoutNav />
-              </KeyboardProvider>
+            <GestureHandlerRootView style={styles.root}>
+              <AuthGate />
             </GestureHandlerRootView>
           </AuthProvider>
         </QueryClientProvider>
@@ -82,3 +71,8 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});

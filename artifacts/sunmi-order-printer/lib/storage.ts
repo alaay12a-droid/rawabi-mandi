@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Settings } from './types';
+import { Settings, TerminalEvent, OrderAction } from './types';
 
 const PRINTED_ORDERS_KEY = '@printed_orders';
 const SETTINGS_KEY = '@app_settings';
@@ -17,9 +17,11 @@ export const getDeviceId = async (): Promise<string> => {
 export const getPrintedOrderIds = async (): Promise<string[]> => {
   try {
     const data = await AsyncStorage.getItem(PRINTED_ORDERS_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch (e) {
-    return [];
+    const ids: unknown = data ? JSON.parse(data) : [];
+    if (!Array.isArray(ids)) throw new Error('Invalid print history');
+    return ids.map(String);
+  } catch {
+    throw new Error('تعذرت قراءة سجل الطباعة؛ أوقفت الطباعة التلقائية لمنع تكرار الفواتير');
   }
 };
 
@@ -34,6 +36,15 @@ export const addPrintedOrderId = async (id: string) => {
 const defaultSettings: Settings = {
   soundEnabled: true,
   autoAssignDrivers: false,
+  autoPrint: true,
+  paperWidth: 58,
+  copies: 1,
+  kitchenCopy: true,
+  customerCopy: true,
+  keepAwake: true,
+  language: 'ar',
+  storeName: 'روابي المندي',
+  supportPhone: '',
 };
 
 export const getSettings = async (): Promise<Settings> => {
@@ -49,9 +60,27 @@ export const getSettings = async (): Promise<Settings> => {
 };
 
 export const saveSettings = async (settings: Settings) => {
-  try {
-    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch (e) {
-    console.error('Failed to save settings', e);
-  }
+  await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 };
+
+export interface TerminalHistory {
+  events: TerminalEvent[];
+  actions: OrderAction[];
+}
+
+export async function getTerminalHistory(userId: number): Promise<TerminalHistory> {
+  const raw = await AsyncStorage.getItem(`@sunmi_history_${userId}`);
+  if (!raw) return { events: [], actions: [] };
+  const parsed = JSON.parse(raw) as TerminalHistory;
+  if (!Array.isArray(parsed.events) || !Array.isArray(parsed.actions)) {
+    throw new Error('سجل الجهاز غير صالح');
+  }
+  return parsed;
+}
+
+export async function saveTerminalHistory(userId: number, history: TerminalHistory): Promise<void> {
+  await AsyncStorage.setItem(`@sunmi_history_${userId}`, JSON.stringify({
+    events: history.events.slice(0, 300),
+    actions: history.actions.slice(0, 500),
+  }));
+}

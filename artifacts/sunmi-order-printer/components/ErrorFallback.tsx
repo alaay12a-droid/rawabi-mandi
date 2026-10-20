@@ -69,11 +69,11 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
 
       <View style={styles.content}>
         <Text style={[styles.title, { color: colors.foreground }]}>
-          Something went wrong
+          حدث خطأ داخل التطبيق
         </Text>
 
-        <Text style={[styles.message, { color: colors.mutedForeground }]}>
-          Please reload the app to continue.
+        <Text selectable style={[styles.message, { color: colors.mutedForeground }]}>
+          {error.message || 'تعذر إكمال تشغيل التطبيق. أعد المحاولة.'}
         </Text>
 
         <Pressable
@@ -90,7 +90,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
           <Text
             style={[styles.buttonText, { color: colors.primaryForeground }]}
           >
-            Try Again
+            إعادة تشغيل التطبيق
           </Text>
         </Pressable>
       </View>

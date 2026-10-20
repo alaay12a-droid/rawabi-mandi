@@ -1,86 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { router } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
+import { Alert, ScrollView, Switch, View } from 'react-native';
+import { useTerminal } from '../../lib/TerminalContext';
+import type { Settings } from '../../lib/types';
 import { useColors } from '../../hooks/useColors';
-import { getSettings, saveSettings } from '../../lib/storage';
-import { stopAlert } from '../../lib/sound';
-import { useAuth } from '../../contexts/AuthContext';
-import { getApiBase } from '../../lib/api';
+import { Btn, Card, Chip, errMsg, Field, Notice, ROW, Screen, Txt } from '../../components/ui';
 
 export default function SettingsScreen() {
-  const colors = useColors();
-  const { user, logout } = useAuth();
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [apiLabel, setApiLabel] = useState('غير مضبوط');
-
-  useEffect(() => {
-    getSettings().then((settings) => setSoundEnabled(settings.soundEnabled));
-    try { setApiLabel(getApiBase()); } catch {}
-  }, []);
-
-  const changeSound = async (enabled: boolean) => {
-    setSoundEnabled(enabled);
-    await saveSettings({ soundEnabled: enabled, autoAssignDrivers: false });
-    if (!enabled) await stopAlert();
-  };
-
-  const signOut = () => {
-    Alert.alert('تسجيل الخروج', 'هل تريد إنهاء جلسة جهاز Sunmi؟', [
-      { text: 'إلغاء', style: 'cancel' },
-      {
-        text: 'تسجيل الخروج',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/login');
-        },
-      },
-    ]);
-  };
-
+  const c = useColors();
+  const { settings, updateSettings } = useTerminal();
+  const [store, setStore] = useState(settings.storeName);
+  const [phone, setPhone] = useState(settings.supportPhone);
+  useEffect(() => { setStore(settings.storeName); setPhone(settings.supportPhone); }, [settings.storeName, settings.supportPhone]);
+  const set = (p: Partial<Settings>) => updateSettings(p).catch((e) => Alert.alert('تعذر حفظ الإعداد', errMsg(e)));
+  const Row = ({ k, label, hint }: { k: 'soundEnabled' | 'autoPrint' | 'kitchenCopy' | 'customerCopy' | 'keepAwake'; label: string; hint?: string }) => (
+    <View style={{ flexDirection: ROW, alignItems: 'center', gap: 12, minHeight: 54 }}>
+      <View style={{ flex: 1 }}><Txt style={{ fontFamily: 'Inter_600SemiBold' }}>{label}</Txt>{hint ? <Txt muted style={{ fontSize: 13 }}>{hint}</Txt> : null}</View>
+      <Switch value={settings[k]} onValueChange={(v) => void set({ [k]: v })} trackColor={{ true: c.success, false: c.muted }} />
+    </View>
+  );
   return (
-    <ScrollView style={styles.container}>
-      <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.row}>
-          <View style={styles.rowLabel}>
-            <MaterialIcons name="notifications-active" size={24} color={colors.primary} />
-            <Text style={[styles.label, { color: colors.foreground }]}>صوت الطلبات الجديدة</Text>
-          </View>
-          <Switch
-            value={soundEnabled}
-            onValueChange={changeSound}
-            trackColor={{ false: colors.muted, true: colors.primary }}
-            thumbColor={colors.card}
-            testID="sound-setting"
-          />
-        </View>
-        <Text style={[styles.desc, { color: colors.mutedForeground }]}>
-          هذا إعداد محلي لجهاز Sunmi ولا يغيّر إعدادات روابي.
-        </Text>
-      </View>
-
-      <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.label, { color: colors.foreground }]}>اتصال Orders API</Text>
-        <Text style={[styles.api, { color: colors.mutedForeground }]}>{apiLabel}</Text>
-        <Text style={[styles.desc, { color: colors.mutedForeground }]}>الحساب الحالي: {user?.username}</Text>
-      </View>
-
-      <Pressable style={[styles.logout, { borderColor: colors.destructive }]} onPress={signOut} testID="sunmi-logout">
-        <Text style={[styles.logoutText, { color: colors.destructive }]}>تسجيل الخروج</Text>
-      </Pressable>
-    </ScrollView>
+    <Screen>
+      <ScrollView contentContainerStyle={{ padding: 12, gap: 12 }} keyboardShouldPersistTaps="handled">
+        <Notice text="كل هذه الإعدادات محلية على هذا الجهاز فقط ولا تغيّر إعدادات الخادم أو الإسناد التلقائي." />
+        <Card>
+          <Txt style={{ fontFamily: 'Inter_700Bold', fontSize: 17 }}>التنبيهات</Txt>
+          <Notice text="تنبيه الطلبات الجديدة إلزامي ومتكرر حتى القبول. يعمل بأقصى مستوى داخل التطبيق؛ ارفع صوت الوسائط من أزرار جهاز Sunmi لأعلى مستوى. الطلب الملغي لا يستمر تنبيهه." />
+          <Row k="keepAwake" label="إبقاء الشاشة مضاءة" hint="يساعد على وصول الطلبات لأن التطبيق لا يعمل في الخلفية" />
+        </Card>
+        <Card>
+          <Txt style={{ fontFamily: 'Inter_700Bold', fontSize: 17 }}>الطباعة</Txt>
+          <Txt muted style={{ fontSize: 14 }}>الطابعة: Sunmi V3 المدمجة</Txt>
+          <Row k="autoPrint" label="طباعة تلقائية للطلبات قيد التحضير" />
+          <Row k="kitchenCopy" label="نسخة المطبخ" />
+          <Row k="customerCopy" label="نسخة العميل" />
+          <Txt style={{ fontFamily: 'Inter_600SemiBold' }}>عرض الورق</Txt>
+          <View style={{ flexDirection: ROW, gap: 8 }}>{([58, 80] as const).map((w) => <Chip key={w} label={`${w} مم`} active={settings.paperWidth === w} onPress={() => void set({ paperWidth: w })} />)}</View>
+          <Txt style={{ fontFamily: 'Inter_600SemiBold' }}>عدد النسخ</Txt>
+          <View style={{ flexDirection: ROW, gap: 8, flexWrap: 'wrap' }}>{[1, 2, 3, 4, 5].map((n) => <Chip key={n} label={`${n}`} active={settings.copies === n} onPress={() => void set({ copies: n })} />)}</View>
+        </Card>
+        <Card>
+          <Txt style={{ fontFamily: 'Inter_700Bold', fontSize: 17 }}>المتجر</Txt>
+          <Field label="اسم المتجر على الإيصال" value={store} onChangeText={setStore} />
+          <Field label="رقم الدعم (يستخدم في زري الاتصال وواتساب)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+9665XXXXXXXX" style={{ textAlign: 'left', writingDirection: 'ltr' }} />
+          <Btn tone="soft" icon="save" label="حفظ بيانات المتجر" onPress={() => void set({ storeName: store.trim(), supportPhone: phone.trim() })} />
+        </Card>
+        <Card>
+          <Txt style={{ fontFamily: 'Inter_700Bold', fontSize: 17 }}>اللغة</Txt>
+          <Txt muted>العربية هي لغة التطبيق. الإنجليزية غير متوفرة بشكل كامل حاليا، لذلك لا يوجد مفتاح تبديل يعرض ترجمة ناقصة.</Txt>
+        </Card>
+      </ScrollView>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  section: { padding: 16, borderRadius: 12, borderWidth: 1, marginBottom: 16 },
-  row: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' },
-  rowLabel: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
-  label: { fontSize: 18, fontFamily: 'Inter_600SemiBold', textAlign: 'right' },
-  desc: { fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 8, lineHeight: 20, textAlign: 'right' },
-  api: { fontSize: 13, marginTop: 10, textAlign: 'left' },
-  logout: { minHeight: 52, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  logoutText: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-});

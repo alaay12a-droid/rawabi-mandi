@@ -1,105 +1,63 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Switch, ActivityIndicator, Alert } from 'react-native';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useEffect, useState } from 'react';
+import { Alert, ScrollView, Switch, View } from 'react-native';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import type { BranchHours } from '../../lib/types';
 import { useColors } from '../../hooks/useColors';
-import { BranchHours } from '../../lib/types';
+import { Btn, Card, errMsg, ErrorState, Field, Notice, ROW, Screen, Skeleton, Txt } from '../../components/ui';
+
+// Index order follows the backend array (0 = Sunday, JS getDay convention).
+const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export default function HoursScreen() {
-  const colors = useColors();
-  const queryClient = useQueryClient();
-
-  const { data: hours, isLoading, isError, refetch } = useQuery({
-    queryKey: ['hours'],
-    queryFn: api.getHours,
-  });
-
-  const updateHours = useMutation({
-    mutationFn: (data: BranchHours) => api.updateHours(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['hours'] });
-      Alert.alert('نجاح', 'تم تحديث أوقات العمل بنجاح');
+  const c = useColors();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['hours'], queryFn: api.getHours });
+  const status = useQuery({ queryKey: ['branch-status'], queryFn: api.getBranchStatus, refetchInterval: 30000 });
+  const [draft, setDraft] = useState<BranchHours | null>(null);
+  useEffect(() => { if (q.data && !draft) setDraft(q.data); }, [q.data, draft]);
+  const save = useMutation({
+    mutationFn: async (h: BranchHours) => {
+      for (let i = 0; i < h.days.length; i++) {
+        const d = h.days[i];
+        if (d.enabled && (!TIME.test(d.open) || !TIME.test(d.close))) throw new Error(`صيغة الوقت في يوم ${DAYS[i]} يجب أن تكون HH:MM بنظام 24 ساعة`);
+      }
+      return api.updateHours(h);
     },
-    onError: (err) => {
-      Alert.alert('خطأ', 'فشل في تحديث الأوقات: ' + err.message);
-    }
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['hours'] }); void qc.invalidateQueries({ queryKey: ['branch-status'] }); Alert.alert('تم الحفظ', 'تم تحديث ساعات العمل'); },
+    onError: (e) => Alert.alert('تعذر الحفظ', errMsg(e)),
   });
-
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
-  if (isError || !hours) {
-    return (
-      <View style={styles.center}>
-        <Text style={{ color: colors.destructive, fontFamily: 'Inter_500Medium' }}>حدث خطأ في تحميل الأوقات</Text>
-        <Pressable style={[styles.retryBtn, { backgroundColor: colors.primary }]} onPress={() => refetch()}>
-          <Text style={[styles.btnText, { color: colors.primaryForeground }]}>إعادة المحاولة</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const toggleStatus = () => {
-    updateHours.mutate({ ...hours, isOpen: !hours.isOpen });
-  };
+  if (q.isLoading) return <Screen><Skeleton /></Screen>;
+  if (q.isError || !draft) return <Screen><ErrorState message={errMsg(q.error)} onRetry={() => void q.refetch()} /></Screen>;
+  const setDay = (i: number, p: Partial<BranchHours['days'][number]>) => setDraft({ ...draft, days: draft.days.map((d, k) => (k === i ? { ...d, ...p } : d)) });
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.row}>
-          <View>
-            <Text style={[styles.title, { color: colors.foreground }]}>حالة الفرع</Text>
-            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-              {hours.isOpen ? 'الفرع يستقبل الطلبات حالياً' : 'الفرع مغلق ولا يستقبل طلبات'}
-            </Text>
+    <Screen>
+      <ScrollView contentContainerStyle={{ padding: 12, gap: 12 }} keyboardShouldPersistTaps="handled">
+        {status.data ? <Card style={{ borderColor: status.data.isOpen ? c.success : c.destructive }}><Txt style={{ fontFamily: 'Inter_700Bold' }}>{status.data.isOpen ? 'الفرع مفتوح الآن' : 'الفرع مغلق الآن'}</Txt><Txt muted>{status.data.message}</Txt></Card> : null}
+        <Card>
+          <View style={{ flexDirection: ROW, alignItems: 'center', gap: 12 }}>
+            <View style={{ flex: 1 }}><Txt style={{ fontFamily: 'Inter_700Bold' }}>تطبيق الجدول الأسبوعي</Txt><Txt muted style={{ fontSize: 14 }}>عند الإيقاف لا يتم التحكم بالفتح والإغلاق من الجدول</Txt></View>
+            <Switch value={draft.enabled} onValueChange={(v) => setDraft({ ...draft, enabled: v })} trackColor={{ true: c.success, false: c.muted }} />
           </View>
-          <Switch
-            value={hours.isOpen}
-            onValueChange={toggleStatus}
-            trackColor={{ false: colors.muted, true: colors.primary }}
-            thumbColor={colors.card}
-            style={{ transform: [{ scale: 1.5 }] }}
-          />
-        </View>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.foreground, marginBottom: 16 }]}>ساعات العمل الرسمية</Text>
-        
-        <View style={styles.timeRow}>
-          <Text style={[styles.timeLabel, { color: colors.foreground }]}>وقت الفتح:</Text>
-          <Text style={[styles.timeValue, { color: colors.primary }]}>{hours.openingTime}</Text>
-        </View>
-        
-        <View style={styles.timeRow}>
-          <Text style={[styles.timeLabel, { color: colors.foreground }]}>وقت الإغلاق:</Text>
-          <Text style={[styles.timeValue, { color: colors.primary }]}>{hours.closingTime}</Text>
-        </View>
-
-        <Text style={[styles.note, { color: colors.mutedForeground }]}>
-          ملاحظة: تعديل الأوقات يتم من خلال لوحة الإدارة الرئيسية.
-        </Text>
-      </View>
-    </View>
+        </Card>
+        {draft.days.slice(0, 7).map((d, i) => (
+          <Card key={i} style={{ opacity: d.enabled ? 1 : 0.75 }}>
+            <View style={{ flexDirection: ROW, alignItems: 'center', gap: 12 }}>
+              <Txt style={{ flex: 1, fontFamily: 'Inter_700Bold' }}>{DAYS[i]}</Txt>
+              <Txt muted style={{ fontSize: 14 }}>{d.enabled ? 'يعمل' : 'إجازة'}</Txt>
+              <Switch value={d.enabled} onValueChange={(v) => setDay(i, { enabled: v })} trackColor={{ true: c.success, false: c.muted }} />
+            </View>
+            {d.enabled && (
+              <View style={{ flexDirection: ROW, gap: 10 }}>
+                <View style={{ flex: 1 }}><Field label="من" value={d.open} onChangeText={(v) => setDay(i, { open: v })} placeholder="09:00" keyboardType="numbers-and-punctuation" maxLength={5} style={{ textAlign: 'center' }} /></View>
+                <View style={{ flex: 1 }}><Field label="إلى" value={d.close} onChangeText={(v) => setDay(i, { close: v })} placeholder="23:00" keyboardType="numbers-and-punctuation" maxLength={5} style={{ textAlign: 'center' }} /></View>
+              </View>)}
+          </Card>))}
+        <Btn icon="save" label="حفظ ساعات العمل" loading={save.isPending} onPress={() => save.mutate(draft)} />
+        <Notice text="غير مدعوم حاليا في الخادم: فترات متعددة في اليوم، الإغلاق المؤقت المجدول، والإتاحة أو الاسترداد المجدول. الجدول هنا فترة واحدة لكل يوم." />
+      </ScrollView>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, gap: 16 },
-  card: { padding: 24, borderRadius: 12, borderWidth: 1 },
-  row: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 20, fontFamily: 'Inter_700Bold' },
-  subtitle: { fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 8 },
-  timeRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-  timeLabel: { fontSize: 18, fontFamily: 'Inter_600SemiBold' },
-  timeValue: { fontSize: 18, fontFamily: 'Inter_700Bold' },
-  note: { fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 16, textAlign: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  retryBtn: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
-  btnText: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
-});

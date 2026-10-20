@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
-import type { Order, OrderItem } from './types';
+import type { Order } from './types';
+import { getSettings } from './storage';
+import { buildReceipt } from './receipt';
 
 type SunmiPrinterModule = typeof import('@mitsuharu/react-native-sunmi-printer-library');
 
@@ -14,7 +16,9 @@ function getSunmiPrinter(): SunmiPrinterModule {
   return printerModule;
 }
 
-const money = (minorUnits: number) => `${(minorUnits / 100).toFixed(2)} ر.س`;
+let busy = false;
+let lastError: string | null = null;
+export const getLastPrinterError = () => lastError;
 
 async function preparePrinter() {
   const SunmiPrinter = getSunmiPrinter();
@@ -35,43 +39,48 @@ async function printLine(
 }
 
 export const printOrder = async (order: Order, reprintReason?: string): Promise<boolean> => {
+  if (busy) {
+    lastError = 'الطابعة مشغولة. انتظر انتهاء الفاتورة الحالية';
+    return false;
+  }
+  busy = true;
+  lastError = null;
   let SunmiPrinter: SunmiPrinterModule | null = null;
   try {
+    const settings = await getSettings();
+    if (!settings.customerCopy && !settings.kitchenCopy) throw new Error('فعّل نسخة العميل أو المطبخ في الإعدادات');
     SunmiPrinter = await preparePrinter();
-    await SunmiPrinter.enterPrinterBuffer(true);
-    await printLine(SunmiPrinter, 'روابي المندي', 30, 'center');
-    await printLine(SunmiPrinter, `طلب #${order.dailyNumber}`, 40, 'center');
-    await printLine(SunmiPrinter, '--------------------------------', 22, 'center');
-    await printLine(SunmiPrinter, `الاسم: ${order.customerName}`);
-    await printLine(SunmiPrinter, `الهاتف: ${order.customerPhone}`);
-    await printLine(SunmiPrinter, `النوع: ${order.orderType === 'delivery' ? 'توصيل' : 'استلام'}`);
-    if (order.customerAddress) await printLine(SunmiPrinter, `العنوان: ${order.customerAddress}`);
-    if (order.notes) await printLine(SunmiPrinter, `ملاحظات: ${order.notes}`);
-    await printLine(SunmiPrinter, '--------------------------------', 22, 'center');
-    for (const item of order.items) {
-      await printLine(SunmiPrinter, `${item.quantity} × ${item.name}`);
-      await printLine(SunmiPrinter, `${money(item.price * item.quantity)}`, 22, 'left');
-      if (item.notes) await printLine(SunmiPrinter, `  ${item.notes}`, 20);
+    const kinds: Array<'customer' | 'kitchen'> = [];
+    if (settings.customerCopy) kinds.push('customer');
+    if (settings.kitchenCopy) kinds.push('kitchen');
+    const copies = Math.min(5, Math.max(1, Math.floor(settings.copies)));
+    for (let copy = 0; copy < copies; copy++) {
+      for (const kind of kinds) {
+        await SunmiPrinter.enterPrinterBuffer(true);
+        for (const line of buildReceipt(order, settings, kind, reprintReason)) {
+          await printLine(SunmiPrinter, line.text, line.size, line.alignment);
+        }
+        await SunmiPrinter.setAlignment('center');
+        await SunmiPrinter.printQRCode(`RAWABI-ORDER:${order.id}`, settings.paperWidth === 80 ? 6 : 4, 'middle');
+        await SunmiPrinter.lineWrap(4);
+        await SunmiPrinter.exitPrinterBuffer(true);
+      }
     }
-    await printLine(SunmiPrinter, '--------------------------------', 22, 'center');
-    if (order.discountAmount > 0) await printLine(SunmiPrinter, `الخصم: ${money(order.discountAmount)}`);
-    if (order.deliveryFee > 0) await printLine(SunmiPrinter, `رسوم التوصيل: ${money(order.deliveryFee)}`);
-    await printLine(SunmiPrinter, `الإجمالي: ${money(order.totalPrice)}`, 30, 'center');
-    if (reprintReason) {
-      await printLine(SunmiPrinter, 'إعادة طباعة', 24, 'center');
-      await printLine(SunmiPrinter, `السبب: ${reprintReason}`, 22, 'center');
-    }
-    await SunmiPrinter.lineWrap(4);
-    await SunmiPrinter.exitPrinterBuffer(true);
     return true;
   } catch (e) {
+    lastError = e instanceof Error ? e.message : 'فشلت الطباعة';
     console.error('[SunmiPrinter] Error printing:', e);
     try { await SunmiPrinter?.exitPrinterBuffer(false); } catch {}
     return false;
+  } finally {
+    busy = false;
   }
 };
 
 export const printTest = async (): Promise<boolean> => {
+  if (busy) return false;
+  busy = true;
+  lastError = null;
   try {
     const SunmiPrinter = await preparePrinter();
     await printLine(SunmiPrinter, 'اختبار الطباعة', 30, 'center');
@@ -79,7 +88,10 @@ export const printTest = async (): Promise<boolean> => {
     await SunmiPrinter.lineWrap(4);
     return true;
   } catch (e) {
+    lastError = e instanceof Error ? e.message : 'فشل اختبار الطباعة';
     console.error('[SunmiPrinter] Error testing print:', e);
     return false;
+  } finally {
+    busy = false;
   }
 };
