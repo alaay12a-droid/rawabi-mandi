@@ -8,7 +8,7 @@ import {
   Linking,
   StatusBar,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -109,7 +109,7 @@ export default function HomeScreen() {
   const handleSelectItem = useCallback((item: RawItem) => setSelectedItem(item), []);
   const handleCloseDetail = useCallback(() => setSelectedItem(null), []);
   const searchRef = useRef<TextInput>(null);
-  const listRef = useRef<FlashList<ListEntry>>(null);
+  const listRef = useRef<FlashListRef<ListEntry>>(null);
 
   useFocusEffect(useCallback(() => { refreshMenu(); }, [refreshMenu]));
   useEffect(() => { refreshBanners(); }, [refreshBanners]);

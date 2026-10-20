@@ -30,7 +30,7 @@ const F = {
   extra:   "Cairo_800ExtraBold",
 };
 
-type OrderStatus = "pending" | "preparing" | "ready" | "done";
+type OrderStatus = "pending" | "preparing" | "ready" | "done" | "cancelled";
 type DriverStatus = "assigned" | "picked_up" | "delivered";
 
 interface Order {
@@ -787,6 +787,7 @@ export default function OrderConfirmedScreen() {
 
   /* ── Which status panel to show ── */
   const showPanel = () => {
+    if (status === "cancelled") return "cancelled";
     if (isDelivery) {
       if (effectivelyDelivered) return "delivered";
       if (status === "done" && !driverStatus) return "done";

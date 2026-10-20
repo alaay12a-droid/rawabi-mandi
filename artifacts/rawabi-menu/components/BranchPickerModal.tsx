@@ -1,8 +1,8 @@
 /**
  * BranchPickerModal
  * Full-screen modal shown when the customer picks "استلام".
- * Displays an interactive map (react-native-maps) centred on the selected
- * branch, followed by a sorted branch list and a confirm button.
+ * Displays a sorted branch list and a confirm button. iOS includes an embedded
+ * map; Android opens branch locations externally without requiring a Maps key.
  */
 import React, { useMemo, useRef, useEffect } from "react";
 import {
@@ -17,8 +17,10 @@ import {
   Platform,
   Pressable,
   StatusBar,
+  Linking,
+  Alert,
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -132,6 +134,24 @@ export default function BranchPickerModal({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasBranchCoords = branches.some(b => b.lat != null && b.lng != null);
+  // Android's native Google map requires a key in the installed binary.
+  // Pickup must remain usable without that optional native map configuration.
+  const showEmbeddedMap = Platform.OS === "ios" && hasBranchCoords;
+
+  const openBranchMap = async (branch: PickerBranch) => {
+    const url = branch.lat != null && branch.lng != null
+      ? `https://maps.google.com/?q=${branch.lat},${branch.lng}`
+      : branch.mapsUrl;
+    if (!url) return;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(
+        isEn ? "Could not open maps" : "تعذّر فتح الخرائط",
+        isEn ? "Please try again or use the branch address." : "حاول مرة أخرى أو استخدم عنوان الفرع.",
+      );
+    }
+  };
 
   return (
     <Modal
@@ -145,13 +165,12 @@ export default function BranchPickerModal({
       <View style={[styles.root, { backgroundColor: colors.background, paddingBottom: insets.bottom + 16 }]}>
 
         {/* ── Map ─────────────────────────────────────────────────────────── */}
-        {hasBranchCoords ? (
+        {showEmbeddedMap ? (
           <View style={[styles.mapContainer, { height: MAP_H }]}>
             <MapView
               ref={mapRef}
               style={StyleSheet.absoluteFill}
               initialRegion={mapRegion}
-              provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
               showsUserLocation={!!(userLat && userLng)}
               showsMyLocationButton={false}
             >
@@ -178,7 +197,7 @@ export default function BranchPickerModal({
             </Pressable>
           </View>
         ) : (
-          /* No coords — show header bar instead of map */
+          /* List-only mode — show header bar instead of native map */
           <View style={[styles.headerBar, { backgroundColor: colors.card, borderBottomColor: colors.border, paddingTop: insets.top + 8 }]}>
             <Pressable onPress={onClose} style={styles.headerClose}>
               <Text style={{ fontSize: 18, color: colors.foreground }}>✕</Text>
@@ -192,7 +211,7 @@ export default function BranchPickerModal({
 
         {/* ── Branch list ─────────────────────────────────────────────────── */}
         <View style={[styles.sheet, { backgroundColor: colors.background }]}>
-          {hasBranchCoords && (
+          {showEmbeddedMap && (
             <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
               <Text style={[styles.sheetTitle, { color: colors.foreground, fontFamily: F.bold }]}>
                 {isEn ? "Choose Pickup Branch" : "اختار الفرع للاستلام"}
@@ -212,8 +231,8 @@ export default function BranchPickerModal({
                   : null;
 
               return (
+                <View key={b.id}>
                 <TouchableOpacity
-                  key={b.id}
                   activeOpacity={0.8}
                   onPress={() => onSelect(b)}
                   style={[
@@ -259,6 +278,18 @@ export default function BranchPickerModal({
                     ) : null}
                   </View>
                 </TouchableOpacity>
+                {Platform.OS === "android" && ((b.lat != null && b.lng != null) || b.mapsUrl) && (
+                  <TouchableOpacity
+                    onPress={() => void openBranchMap(b)}
+                    accessibilityRole="link"
+                    style={{ paddingHorizontal: 14, paddingVertical: 10 }}
+                  >
+                    <Text style={{ color: colors.primary, fontFamily: F.semi, textAlign: "right" }}>
+                      {isEn ? "Open branch location in maps" : "فتح موقع الفرع في الخرائط"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                </View>
               );
             })}
           </ScrollView>
