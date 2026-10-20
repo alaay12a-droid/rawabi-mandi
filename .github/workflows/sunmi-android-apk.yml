@@ -46,6 +46,8 @@ jobs:
           cd "$SUNMI_NATIVE_DIR"
           pnpm exec tsc --noEmit
           node -e "const c=require('./app.json').expo;if(c.name!=='چڤن'||c.slug!=='sunmi-order-printer'||c.android.package!=='com.standalone.sunmiorderprinter')throw Error('Unexpected app identity')"
+      - name: Check printer and alarm regression tests
+        run: NODE_PATH="$SUNMI_NATIVE_DIR/node_modules" node artifacts/sunmi-order-printer/scripts/test-terminal.cjs
       - name: Generate Android native project
         run: cd "$SUNMI_NATIVE_DIR" && pnpm exec expo prebuild --platform android --no-install
       - name: Build signed release APK

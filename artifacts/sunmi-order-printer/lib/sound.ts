@@ -2,8 +2,8 @@ import * as Haptics from 'expo-haptics';
 import { Vibration } from 'react-native';
 import { getSettings } from './storage';
 
-type AudioApi = typeof import('expo-av').Audio;
-type AudioSound = InstanceType<AudioApi['Sound']>;
+type AudioApi = typeof import('expo-audio');
+type AudioSound = ReturnType<AudioApi['createAudioPlayer']>;
 
 let isAlerting = false;
 let vibrationInterval: any = null;
@@ -12,7 +12,7 @@ let audioPromise: Promise<AudioApi> | null = null;
 let revision = 0;
 
 const getAudio = (): Promise<AudioApi> => {
-  audioPromise ??= import('expo-av').then(({ Audio }) => Audio);
+  audioPromise ??= import('expo-audio');
   return audioPromise;
 };
 
@@ -35,22 +35,28 @@ export const startAlert = async ({ force = false }: { force?: boolean } = {}) =>
     const Audio = await getAudio();
     if (current !== revision) return;
     await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      shouldDuckAndroid: false,
-      playThroughEarpieceAndroid: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
     });
     if (current !== revision) return;
-    const { sound } = await Audio.Sound.createAsync(
+    const sound = Audio.createAudioPlayer(
       require('../assets/audio/alert.wav'),
-      { isLooping: true, volume: 1, isMuted: false, shouldPlay: false }
+      { keepAudioSessionActive: true }
     );
     if (current !== revision) {
-      await sound.unloadAsync();
+      sound.remove();
       return;
     }
+    sound.loop = true;
+    sound.volume = 1;
+    sound.muted = false;
     soundObject = sound;
-    await soundObject.playAsync();
+    sound.setActiveForLockScreen(true, { title: 'طلب جديد بانتظار القبول', artist: 'چڤن' }, {
+      showSeekBackward: false, showSeekForward: false,
+    });
+    sound.play();
   } catch (e) {
     if (current !== revision) return;
     console.warn('Alert start error:', e);
@@ -72,8 +78,12 @@ export const stopAlert = async () => {
   soundObject = null;
   if (previousSound) {
     try {
-      await previousSound.stopAsync();
-      await previousSound.unloadAsync();
-    } catch (e) {}
+      previousSound.setActiveForLockScreen(false);
+      previousSound.pause();
+    } catch (e) {
+      console.warn('Alert pause error:', e);
+    } finally {
+      try { previousSound.remove(); } catch {}
+    }
   }
 };

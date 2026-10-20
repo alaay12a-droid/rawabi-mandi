@@ -27,7 +27,14 @@
     "web": {
       "favicon": "./assets/images/icon.png"
     },
-    "plugins": ["expo-router", "expo-av"],
+    "plugins": [
+      "expo-router",
+      ["expo-audio", {
+        "microphonePermission": false,
+        "recordAudioAndroid": false,
+        "enableBackgroundPlayback": true
+      }]
+    ],
     "experiments": {
       "typedRoutes": true
     },

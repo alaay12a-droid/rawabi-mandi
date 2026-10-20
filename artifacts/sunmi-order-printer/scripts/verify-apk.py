@@ -17,6 +17,8 @@ if minimum > 24:
     raise RuntimeError(f"Android minimum unexpectedly increased to API {minimum}")
 with zipfile.ZipFile(apk) as bundle:
     names = bundle.namelist()
+    if any(name.endswith("/libexpo-av.so") for name in names):
+        raise RuntimeError("Incompatible legacy Expo AV binary must not be packaged")
     for abi in ("armeabi-v7a", "arm64-v8a", "x86_64"):
         hermes = any(f"lib/{abi}/{name}" in names for name in ("libhermes.so", "libhermesvm.so"))
         if f"lib/{abi}/libreactnative.so" not in names or not hermes:

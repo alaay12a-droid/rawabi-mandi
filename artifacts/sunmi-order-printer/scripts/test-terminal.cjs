@@ -171,30 +171,40 @@ async function run() {
   let stops = 0;
   let audioOptions;
   let audioMode;
+  let released = 0;
+  let lockScreenActive = false;
   const sound = load('lib/sound.ts', {
     'expo-haptics': { notificationAsync: async () => {}, NotificationFeedbackType: { Warning: 1 } },
     'react-native': { Vibration: { vibrate() {}, cancel() {} } },
     './storage': { getSettings: async () => ({ soundEnabled: false }) },
     '../assets/audio/alert.wav': 1,
-    'expo-av': { Audio: {
+    'expo-audio': {
       setAudioModeAsync: async options => { audioMode = options; },
-      Sound: { createAsync: async (_source, options) => {
-        audioOptions = options;
-        return { sound: { playAsync: async () => { plays++; }, stopAsync: async () => { stops++; }, unloadAsync: async () => {} } };
-      } },
-    } },
+      createAudioPlayer: () => {
+        audioOptions = {
+          play: () => { plays++; },
+          pause: () => { stops++; },
+          remove: () => { released++; },
+          setActiveForLockScreen: active => { lockScreenActive = active; },
+        };
+        return audioOptions;
+      },
+    },
   }, { setInterval: () => 1, clearInterval: () => {} });
   await sound.startAlert({ force: true });
   await sound.startAlert({ force: true });
   assert.equal(plays, 1, 'One repeating alarm, no overlapping sound objects');
   assert.equal(audioOptions.volume, 1);
-  assert.equal(audioOptions.isLooping, true);
-  assert.equal(audioOptions.isMuted, false);
-  assert.equal(audioMode.shouldDuckAndroid, false);
-  assert.equal(audioMode.staysActiveInBackground, true);
-  assert.equal(audioMode.playThroughEarpieceAndroid, false);
+  assert.equal(audioOptions.loop, true);
+  assert.equal(audioOptions.muted, false);
+  assert.equal(audioMode.interruptionMode, 'doNotMix');
+  assert.equal(audioMode.shouldPlayInBackground, true);
+  assert.equal(audioMode.shouldRouteThroughEarpiece, false);
+  assert.equal(lockScreenActive, true);
   await sound.stopAlert();
   assert.equal(stops, 1);
+  assert.equal(released, 1);
+  assert.equal(lockScreenActive, false);
   await sound.startAlert();
   assert.equal(plays, 1, 'Legacy optional alerts still respect their preference');
   const missingNativePrinter = load('lib/printer.ts', {
