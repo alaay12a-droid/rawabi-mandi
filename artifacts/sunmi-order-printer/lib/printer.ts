@@ -28,9 +28,31 @@ let busy = false;
 let lastError: string | null = null;
 export const getLastPrinterError = () => lastError;
 
+// A native Promise may never settle if the printer service disconnects or
+// omits a callback. Bound each step, not just the outer job: a timed-out job
+// must never resume submitting the rest of its receipt later.
+async function printerStep<T>(stage: string, action: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(action),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+          `انتهت مهلة الطابعة أثناء: ${stage}. قد تخرج نسخة متأخرة؛ تحقق من الورق قبل إعادة الطباعة.`,
+        )), 15000);
+      }),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${stage}: ${message}`);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function preparePrinter() {
   const SunmiPrinter = getSunmiPrinter();
-  const ready = await SunmiPrinter.prepare();
+  const ready = await printerStep('الاتصال وتهيئة طابعة Sunmi', () => SunmiPrinter.prepare());
   if (!ready) throw new Error('تعذر الاتصال بطابعة Sunmi الداخلية.');
   return SunmiPrinter;
 }
@@ -41,9 +63,9 @@ async function printLine(
   size = 24,
   alignment: 'left' | 'center' | 'right' = 'right',
 ) {
-  await SunmiPrinter.setAlignment(alignment);
-  await SunmiPrinter.setFontSize(size);
-  await SunmiPrinter.printText(`${text}\n`);
+  await printerStep('ضبط محاذاة النص', () => SunmiPrinter.setAlignment(alignment));
+  await printerStep('ضبط حجم الخط', () => SunmiPrinter.setFontSize(size));
+  await printerStep('طباعة سطر الفاتورة', () => SunmiPrinter.printText(`${text}\n`));
 }
 
 export const printOrder = async (order: Order, reprintReason?: string): Promise<boolean> => {
@@ -55,7 +77,7 @@ export const printOrder = async (order: Order, reprintReason?: string): Promise<
   lastError = null;
   let SunmiPrinter: SunmiPrinterModule | null = null;
   try {
-    const settings = await getSettings();
+    const settings = await printerStep('قراءة إعدادات الطباعة', getSettings);
     if (!settings.customerCopy && !settings.kitchenCopy) throw new Error('فعّل نسخة العميل أو المطبخ في الإعدادات');
     SunmiPrinter = await preparePrinter();
     const kinds: Array<'customer' | 'kitchen'> = [];
@@ -64,21 +86,21 @@ export const printOrder = async (order: Order, reprintReason?: string): Promise<
     const copies = Math.min(5, Math.max(1, Math.floor(settings.copies)));
     for (let copy = 0; copy < copies; copy++) {
       for (const kind of kinds) {
-        await SunmiPrinter.enterPrinterBuffer(true);
+        // Stream commands directly. Waiting for native print callbacks while
+        // still inside an uncommitted transaction can block before its commit.
         for (const line of buildReceipt(order, settings, kind, reprintReason)) {
           await printLine(SunmiPrinter, line.text, line.size, line.alignment);
         }
-        await SunmiPrinter.setAlignment('center');
-        await SunmiPrinter.printQRCode(`RAWABI-ORDER:${order.id}`, settings.paperWidth === 80 ? 6 : 4, 'middle');
-        await SunmiPrinter.lineWrap(4);
-        await SunmiPrinter.exitPrinterBuffer(true);
+        const printer = SunmiPrinter;
+        await printerStep('محاذاة رمز الفاتورة', () => printer.setAlignment('center'));
+        await printerStep('طباعة رمز الفاتورة', () => printer.printQRCode(`RAWABI-ORDER:${order.id}`, settings.paperWidth === 80 ? 6 : 4, 'middle'));
+        await printerStep('إخراج ورق الفاتورة', () => printer.lineWrap(4));
       }
     }
     return true;
   } catch (e) {
-    lastError = e instanceof Error ? e.message : 'فشلت الطباعة';
+    lastError = e instanceof Error ? e.message : String(e);
     console.error('[SunmiPrinter] Error printing:', e);
-    try { await SunmiPrinter?.exitPrinterBuffer(false); } catch {}
     return false;
   } finally {
     busy = false;
@@ -86,17 +108,20 @@ export const printOrder = async (order: Order, reprintReason?: string): Promise<
 };
 
 export const printTest = async (): Promise<boolean> => {
-  if (busy) return false;
+  if (busy) {
+    lastError = 'الطابعة مشغولة. انتظر انتهاء الفاتورة الحالية';
+    return false;
+  }
   busy = true;
   lastError = null;
   try {
     const SunmiPrinter = await preparePrinter();
     await printLine(SunmiPrinter, 'اختبار الطباعة', 30, 'center');
     await printLine(SunmiPrinter, 'الطابعة متصلة وجاهزة', 24, 'center');
-    await SunmiPrinter.lineWrap(4);
+    await printerStep('إخراج ورقة الاختبار', () => SunmiPrinter.lineWrap(4));
     return true;
   } catch (e) {
-    lastError = e instanceof Error ? e.message : 'فشل اختبار الطباعة';
+    lastError = e instanceof Error ? e.message : String(e);
     console.error('[SunmiPrinter] Error testing print:', e);
     return false;
   } finally {

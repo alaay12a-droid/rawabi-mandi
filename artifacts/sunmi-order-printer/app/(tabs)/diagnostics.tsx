@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { printTest } from '../../lib/printer';
+import { getLastPrinterError, printTest } from '../../lib/printer';
 import { useTerminal } from '../../lib/TerminalContext';
 import { Btn, Card, errMsg, Notice, Screen, timeOf, Txt } from '../../components/ui';
 import { useColors } from '../../hooks/useColors';
@@ -17,7 +17,7 @@ export default function DiagnosticsScreen() {
     setPrinting(true);
     try {
       const ok = await printTest();
-      setResult({ ok, msg: ok ? 'أرسلت صفحة الاختبار إلى طابعة Sunmi V3' : 'فشلت الطباعة التجريبية. تحقق من الورق والغطاء', at: new Date().toISOString() });
+      setResult({ ok, msg: ok ? 'أرسلت صفحة الاختبار إلى طابعة Sunmi V3. تحقق من خروج الورقة.' : (getLastPrinterError() ?? 'فشلت الطباعة التجريبية. تحقق من الورق والغطاء'), at: new Date().toISOString() });
     } catch (e) { setResult({ ok: false, msg: errMsg(e), at: new Date().toISOString() }); }
     finally { setPrinting(false); }
   };

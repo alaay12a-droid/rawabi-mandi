@@ -158,9 +158,58 @@ async function run() {
   });
   assert.equal(nativeLoads, 0, 'Native SDK must not load at module import/startup');
   assert.equal(await printer.printOrder(order), true);
-  assert.equal(committed, 4, 'Two copies of each customer/kitchen receipt');
+  assert.equal(committed, 0, 'Direct printing must not depend on buffered transaction callbacks');
   assert.equal(qrs, 4);
   assert.equal(await printer.printTest(), true);
+
+  const fastTimers = {
+    setTimeout: callback => setTimeout(callback, 0),
+    clearTimeout,
+  };
+  let resolvePrepare;
+  let recovering = false;
+  let textCalls = 0;
+  const stalledNative = new Proxy({}, { get(_target, name) {
+    if (name === 'then') return undefined;
+    if (name === 'prepare') return () => recovering
+      ? Promise.resolve(true) : new Promise(resolve => { resolvePrepare = resolve; });
+    if (name === 'enterPrinterBuffer' || name === 'exitPrinterBuffer') {
+      return () => { throw new Error('Buffered printing must not be used'); };
+    }
+    if (name === 'printText') return async () => { textCalls++; };
+    return async () => {};
+  } });
+  const stalledPrinter = load('lib/printer.ts', {
+    'react-native': { Platform: { OS: 'android' } },
+    './storage': { getSettings: async () => settings },
+    './receipt': receipt,
+    '@mitsuharu/react-native-sunmi-printer-library': stalledNative,
+  }, fastTimers);
+  assert.equal(await stalledPrinter.printOrder(order), false, 'A missing native callback must not hold the lock forever');
+  assert.match(stalledPrinter.getLastPrinterError(), /الاتصال وتهيئة/);
+  assert.match(stalledPrinter.getLastPrinterError(), /مهلة/);
+  resolvePrepare(true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(textCalls, 0, 'A late callback must not restart a timed-out receipt');
+  recovering = true;
+  assert.equal(await stalledPrinter.printOrder(order), true, 'The print lock must be released after timeout');
+  assert(textCalls > 0);
+  assert.equal(await stalledPrinter.printTest(), true, 'Diagnostics must remain usable after a timeout');
+
+  let stallText = true;
+  const stalledTextPrinter = load('lib/printer.ts', {
+    'react-native': { Platform: { OS: 'android' } },
+    './storage': { getSettings: async () => settings },
+    './receipt': receipt,
+    '@mitsuharu/react-native-sunmi-printer-library': new Proxy(stalledNative, { get(target, name) {
+      if (name === 'printText' && stallText) return () => new Promise(() => {});
+      return target[name];
+    } }),
+  }, fastTimers);
+  assert.equal(await stalledTextPrinter.printTest(), false);
+  assert.match(stalledTextPrinter.getLastPrinterError(), /طباعة سطر/);
+  stallText = false;
+  assert.equal(await stalledTextPrinter.printTest(), true, 'A stalled print command must also release the lock');
 
   const unavailable = load('lib/printer.ts', {
     'react-native': { Platform: { OS: 'web' } }, './storage': { getSettings: async () => settings }, './receipt': receipt,
