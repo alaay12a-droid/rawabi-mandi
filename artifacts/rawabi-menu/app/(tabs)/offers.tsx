@@ -9,6 +9,8 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Clipboard,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -34,6 +36,25 @@ export default function OffersScreen() {
 
   const { occasions, loading: occasionsLoading } = useOccasions();
   const { activeCodes, loaded: codesLoaded } = useDiscountCodes();
+
+  const copyDiscountCode = async (code: string) => {
+    try {
+      if (Platform.OS === "web") {
+        await navigator.clipboard.writeText(code);
+      } else {
+        Clipboard.setString(code);
+      }
+      Alert.alert(
+        isEn ? "Copied" : "تم النسخ",
+        isEn ? "Discount code copied. Paste it at checkout." : "تم نسخ كود الخصم. يمكنك لصقه عند إتمام الطلب.",
+      );
+    } catch {
+      Alert.alert(
+        isEn ? "Could not copy" : "تعذّر النسخ",
+        isEn ? "Please try again." : "يرجى المحاولة مرة أخرى.",
+      );
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -147,11 +168,18 @@ export default function OffersScreen() {
             {activeCodes.map((dc) => (
               <View key={dc.id} style={[styles.codeCard, { backgroundColor: colors.card, borderColor: colors.gold }]}>
                 <View style={styles.codeTop}>
-                  <View style={[styles.codeBadge, { backgroundColor: "#2A1A08", borderColor: colors.gold }]}>
+                  <TouchableOpacity
+                    style={[styles.codeBadge, { backgroundColor: "#2A1A08", borderColor: colors.gold, flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 }]}
+                    onPress={() => void copyDiscountCode(dc.code)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={isEn ? `Copy discount code ${dc.code}` : `نسخ كود الخصم ${dc.code}`}
+                  >
+                    <Feather name="copy" size={19} color={colors.gold} />
                     <Text style={{ color: colors.gold, fontFamily: F.extra, fontSize: 18, letterSpacing: 2 }}>
                       {dc.code}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                   <View style={[styles.discountBadge, { backgroundColor: colors.gold }]}>
                     <Text style={{ color: "#1A0A00", fontFamily: F.extra, fontSize: 15 }}>
                       {dc.type === "percentage"
