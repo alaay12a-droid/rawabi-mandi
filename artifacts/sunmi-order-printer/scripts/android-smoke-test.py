@@ -23,6 +23,8 @@ try:
         pid = adb("shell", "pidof", package, check=False).strip()
         if not pid:
             raise RuntimeError("Release process exited at startup; inspect logcat.txt")
+        if f"Process: {package}," in log and "FATAL EXCEPTION:" in log:
+            raise RuntimeError("Native startup crash recorded; inspect logcat.txt")
         adb("shell", "uiautomator", "dump", "/sdcard/sunmi-ui.xml", check=False)
         xml = adb("shell", "cat", "/sdcard/sunmi-ui.xml", check=False)
         (output / "screen.xml").write_text(xml)
