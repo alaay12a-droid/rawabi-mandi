@@ -35,6 +35,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Prepare isolated printer project
         run: node artifacts/sunmi-order-printer/scripts/prepare-native-build.cjs "$SUNMI_NATIVE_DIR"
       - name: Install printer dependencies only
