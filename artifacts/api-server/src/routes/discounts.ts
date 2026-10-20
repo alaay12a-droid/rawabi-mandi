@@ -2,12 +2,19 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, discountCodesTable, discountCodeUsagesTable, ordersTable } from "@workspace/db";
 import { eq, and, count, desc, gte, sql } from "drizzle-orm";
+import { resolveOptionalDashboardActor } from "./dashboard-auth";
+import { visibleDiscountCodes } from "../lib/discountVisibility";
 
 const router = Router();
 
 // ── GET /discount-codes
-router.get("/discount-codes", async (_req, res) => {
-  const codes = await db.select().from(discountCodesTable).orderBy(discountCodesTable.createdAt);
+router.get("/discount-codes", async (req, res) => {
+  // Never let a shared/browser cache reuse a staff response for a customer.
+  res.set("Cache-Control", "private, no-store");
+  res.vary("Cookie");
+  const actor = await resolveOptionalDashboardActor(req);
+  const allCodes = await db.select().from(discountCodesTable).orderBy(discountCodesTable.createdAt);
+  const codes = visibleDiscountCodes(allCodes, actor !== null);
 
   const usageCounts = await db
     .select({ discountCodeId: discountCodeUsagesTable.discountCodeId, cnt: count() })

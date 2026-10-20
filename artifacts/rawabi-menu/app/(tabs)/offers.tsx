@@ -36,6 +36,11 @@ export default function OffersScreen() {
 
   const { occasions, loading: occasionsLoading } = useOccasions();
   const { activeCodes, loaded: codesLoaded } = useDiscountCodes();
+  // Defense in depth for older servers: personal rewards are never public offers.
+  const publicCodes = activeCodes.filter((discount) =>
+    !/^VIP-/i.test(discount.code.trim())
+    && !/^تحفيز\s+لأفضل\s+عميل/.test(discount.description?.trim() ?? ""),
+  );
 
   const copyDiscountCode = async (code: string) => {
     try {
@@ -86,9 +91,9 @@ export default function OffersScreen() {
             <Text style={[styles.subTabText, { fontFamily: F.bold, color: activeTab === "codes" ? colors.gold : colors.mutedForeground }]}>
               {isEn ? "Discount Codes" : "أكواد الخصم"}
             </Text>
-            {activeCodes.length > 0 && (
+            {publicCodes.length > 0 && (
               <View style={[styles.badge, { backgroundColor: colors.gold }]}>
-                <Text style={{ color: "#1A0A00", fontFamily: F.bold, fontSize: 10 }}>{activeCodes.length}</Text>
+                <Text style={{ color: "#1A0A00", fontFamily: F.bold, fontSize: 10 }}>{publicCodes.length}</Text>
               </View>
             )}
           </View>
@@ -146,7 +151,7 @@ export default function OffersScreen() {
           <View style={styles.center}>
             <ActivityIndicator color={colors.gold} size="large" />
           </View>
-        ) : activeCodes.length === 0 ? (
+        ) : publicCodes.length === 0 ? (
           <View style={styles.emptyWrap}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.surface }]}>
               <Feather name="percent" size={40} color={colors.border} />
@@ -165,7 +170,7 @@ export default function OffersScreen() {
                 ? "Use one of the codes below when confirming your order to get a discount 🎉"
                 : "استخدم أحد الأكواد التالية عند تأكيد طلبك للحصول على خصم 🎉"}
             </Text>
-            {activeCodes.map((dc) => (
+            {publicCodes.map((dc) => (
               <View key={dc.id} style={[styles.codeCard, { backgroundColor: colors.card, borderColor: colors.gold }]}>
                 <View style={styles.codeTop}>
                   <TouchableOpacity
