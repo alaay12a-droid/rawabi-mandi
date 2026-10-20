@@ -197,7 +197,30 @@ async function run() {
   assert.equal(stops, 1);
   await sound.startAlert();
   assert.equal(plays, 1, 'Legacy optional alerts still respect their preference');
-  console.log('PASS: receipts/QR/copies, API contracts, settings, driver-before-accept alarm policy, full-volume looping audio, and explicit unsupported-printer failure.');
+  const missingNativePrinter = load('lib/printer.ts', {
+    'react-native': { Platform: { OS: 'android' } },
+    './storage': { getSettings: async () => settings },
+    './receipt': receipt,
+    console: { error() {} },
+  });
+  assert.equal(missingNativePrinter.getLastPrinterError(), null, 'Loading the app must not load the native printer');
+  assert.equal(await missingNativePrinter.printTest(), false);
+  assert.match(missingNativePrinter.getLastPrinterError(), /يمكنك استخدام التطبيق دون طباعة/);
+
+  let registeredFallback;
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'index.js'), 'utf8'), {
+    require(name) {
+      if (name === 'react') return { createElement: (component, props) => ({ component, props }) };
+      if (name === 'expo') return { registerRootComponent: component => { registeredFallback = component; } };
+      if (name === 'expo-router/entry') throw new Error('Simulated startup import failure');
+      if (name === './components/StartupErrorScreen') return { StartupErrorScreen: 'safe-native-error-screen' };
+      throw new Error('Unexpected bootstrap dependency');
+    },
+    Error, console: { error() {} },
+  });
+  assert.equal(registeredFallback().component, 'safe-native-error-screen');
+  assert.match(registeredFallback().props.error.message, /Simulated startup import failure/);
+  console.log('PASS: terminal contracts, receipts, mandatory alarm, lazy missing-printer recovery, and startup-import error screen.');
 }
 const watchdog = setTimeout(() => {
   console.error('FAIL: terminal tests did not finish');

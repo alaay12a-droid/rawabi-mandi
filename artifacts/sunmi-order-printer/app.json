@@ -3,7 +3,7 @@
     "name": "چڤن",
     "slug": "sunmi-order-printer",
     "owner": "021837ala",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "sunmi-order-printer",
@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.standalone.sunmiorderprinter",
-      "versionCode": 6,
+      "versionCode": 7,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive_icon.png",
         "backgroundColor": "#0F0A05"

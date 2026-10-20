@@ -1,5 +1,6 @@
 import React, { Component, ComponentType, PropsWithChildren } from 'react';
-import { ErrorFallback, ErrorFallbackProps } from '@/components/ErrorFallback';
+import { StartupErrorScreen } from './StartupErrorScreen';
+import type { ErrorFallbackProps } from './ErrorFallback';
 
 export type ErrorBoundaryProps = PropsWithChildren<{
   FallbackComponent?: ComponentType<ErrorFallbackProps>;
@@ -21,7 +22,7 @@ export class ErrorBoundary extends Component<
   static defaultProps: {
     FallbackComponent: ComponentType<ErrorFallbackProps>;
   } = {
-    FallbackComponent: ErrorFallback,
+    FallbackComponent: StartupErrorScreen,
   };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {

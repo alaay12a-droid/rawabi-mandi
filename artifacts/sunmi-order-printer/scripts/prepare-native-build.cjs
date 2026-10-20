@@ -8,7 +8,7 @@ if (!target || target === source || target.startsWith(source + path.sep)) {
 if (fs.existsSync(target)) throw new Error('Destination already exists');
 fs.mkdirSync(target, { recursive: true });
 // Allow-list: no credentials, previous APKs, workspace config, or sibling apps.
-for (const name of ['app', 'assets', 'components', 'constants', 'contexts', 'hooks', 'lib', 'app.json', 'metro.config.js', 'tsconfig.json', 'expo-env.d.ts']) {
+for (const name of ['app', 'assets', 'components', 'constants', 'contexts', 'hooks', 'lib', 'index.js', 'app.json', 'metro.config.js', 'tsconfig.json', 'expo-env.d.ts']) {
   const from = path.join(source, name);
   if (fs.existsSync(from)) fs.cpSync(from, path.join(target, name), { recursive: true });
 }
@@ -32,4 +32,9 @@ fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify(pkg, null, 2)
 // embedded. The merchant signs in via the existing dashboard session API.
 const config = JSON.parse(fs.readFileSync(path.join(target, 'app.json')));
 if (config.expo.android.package !== 'com.standalone.sunmiorderprinter') throw new Error('Wrong Android package');
+const api = process.env.EXPO_PUBLIC_API_BASE_URL;
+if (!api || new URL(api).protocol !== 'https:' || /localhost|127\.0\.0\.1|example/i.test(api)) {
+  throw new Error('EXPO_PUBLIC_API_BASE_URL must be a public HTTPS API at build time');
+}
+fs.writeFileSync(path.join(target, '.env.production'), `EXPO_PUBLIC_API_BASE_URL=${JSON.stringify(api)}\n`);
 console.log('Prepared isolated Sunmi native build with React Native', versions['react-native']);

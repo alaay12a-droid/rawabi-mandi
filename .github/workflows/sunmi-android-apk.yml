@@ -66,7 +66,7 @@ jobs:
           JS
           cd "$SUNMI_NATIVE_DIR/android"
           ./gradlew :app:assembleRelease --no-daemon --max-workers=2 \
-            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64 \
             -I "$GITHUB_WORKSPACE/artifacts/sunmi-order-printer/scripts/sunmi-signing.gradle"
       - name: Verify release and package APK
         run: |
@@ -74,10 +74,28 @@ jobs:
           APK="$SUNMI_NATIVE_DIR/android/app/build/outputs/apk/release/app-release.apk"
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
-          "$BUILD_TOOLS/aapt" dump badging "$APK" | head -4
+          python artifacts/sunmi-order-printer/scripts/verify-apk.py "$APK" "$BUILD_TOOLS/aapt"
           mkdir -p "$RUNNER_TEMP/sunmi-apk"
           cp "$APK" "$RUNNER_TEMP/sunmi-apk/sunmi-printer.apk"
           sha256sum "$RUNNER_TEMP/sunmi-apk/sunmi-printer.apk" > "$RUNNER_TEMP/sunmi-apk/SHA256SUMS.txt"
+      - name: Enable Android emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: Smoke-test signed release on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python artifacts/sunmi-order-printer/scripts/android-smoke-test.py
+      - name: Upload Android launch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunmi-startup-diagnostics
+          path: ${{ runner.temp }}/sunmi-smoke/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: sunmi-printer-apk

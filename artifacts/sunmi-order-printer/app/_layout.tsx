@@ -44,7 +44,7 @@ function AuthGate() {
   );
 }
 
-export default function RootLayout() {
+function AppContent() {
   const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold });
 
   useEffect(() => {
@@ -59,7 +59,6 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <GestureHandlerRootView style={styles.root}>
@@ -67,9 +66,12 @@ export default function RootLayout() {
             </GestureHandlerRootView>
           </AuthProvider>
         </QueryClientProvider>
-      </ErrorBoundary>
     </SafeAreaProvider>
   );
+}
+
+export default function RootLayout() {
+  return <ErrorBoundary><AppContent /></ErrorBoundary>;
 }
 
 const styles = StyleSheet.create({

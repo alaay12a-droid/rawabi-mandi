@@ -12,8 +12,16 @@ function getSunmiPrinter(): SunmiPrinterModule {
     throw new Error('تتطلب الطباعة تطبيق Android مثبتًا على جهاز Sunmi.');
   }
 
-  printerModule ??= require('@mitsuharu/react-native-sunmi-printer-library') as SunmiPrinterModule;
-  return printerModule;
+  try {
+    const module = printerModule
+      ?? require('@mitsuharu/react-native-sunmi-printer-library') as SunmiPrinterModule;
+    if (typeof module.prepare !== 'function') throw new Error('وحدة الطباعة الأصلية غير متاحة');
+    printerModule = module;
+    return module;
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new Error(`تعذر تحميل طابعة Sunmi على هذا الجهاز. يمكنك استخدام التطبيق دون طباعة. ${details}`);
+  }
 }
 
 let busy = false;
