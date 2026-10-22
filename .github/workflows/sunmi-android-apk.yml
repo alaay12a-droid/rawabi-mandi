@@ -2,6 +2,12 @@ name: Sunmi Printer APK
 
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: "Publish the APK from a successful Sunmi run without rebuilding (leave empty for a new build)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -12,6 +18,7 @@ concurrency:
 
 jobs:
   build-sunmi:
+    if: ${{ inputs.artifact_run_id == '' }}
     name: Build signed standalone Sunmi APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -107,3 +114,90 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/sunmi-signing.jks"
+
+  publish-existing-sunmi:
+    name: Publish verified Sunmi APK without rebuilding
+    if: ${{ inputs.artifact_run_id != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Validate successful printer run and unchanged printer sources
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid run ID"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$RUNNER_TEMP/sunmi-source-run.json"
+          python - <<'PY'
+          import json, os, pathlib, re
+          run = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "sunmi-source-run.json").read_text())
+          if run["path"] != ".github/workflows/sunmi-android-apk.yml":
+              raise RuntimeError("Not a Sunmi printer workflow")
+          if run["status"] != "completed" or run["conclusion"] != "success":
+              raise RuntimeError("Printer APK run did not pass")
+          sha = run["head_sha"]
+          if not re.fullmatch(r"[a-f0-9]{40}", sha):
+              raise RuntimeError("Invalid source commit")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"SUNMI_SOURCE_SHA={sha}\n")
+          PY
+          SOURCE_SHA="$(python -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/sunmi-source-run.json'))['head_sha'])")"
+          git fetch --depth=1 origin "$SOURCE_SHA"
+          git diff --exit-code "$SOURCE_SHA" HEAD -- artifacts/sunmi-order-printer
+      - name: Download and checksum the existing APK
+        run: |
+          set -euo pipefail
+          gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name sunmi-printer-apk --dir "$RUNNER_TEMP/sunmi-download"
+          python - <<'PY'
+          import hashlib, json, os, pathlib, re
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          source = root / "sunmi-download"
+          apk = source / "sunmi-printer.apk"
+          checksum = (source / "SHA256SUMS.txt").read_text().split()[0]
+          actual = hashlib.sha256(apk.read_bytes()).hexdigest()
+          if actual != checksum:
+              raise RuntimeError("APK checksum mismatch")
+          config = json.loads(pathlib.Path("artifacts/sunmi-order-printer/app.json").read_text())["expo"]
+          if config["android"]["package"] != "com.standalone.sunmiorderprinter":
+              raise RuntimeError("Not the printer application")
+          version, code = config["version"], config["android"]["versionCode"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version) or not isinstance(code, int) or code < 1:
+              raise RuntimeError("Invalid printer version")
+          out = root / "sunmi-release"
+          out.mkdir()
+          name = f"sunmi-printer-{version}-{code}.apk"
+          apk.rename(out / name)
+          (out / "SHA256SUMS.txt").write_text(f"{actual}  {name}\n")
+          notes = (
+              f"Sunmi printer only: version {version}, Android versionCode {code}.\n\n"
+              "Standalone signed release APK. Passed Android emulator startup check; "
+              "physical receipt printing still needs verification on a Sunmi device.\n\n"
+              f"Source: {os.environ['SUNMI_SOURCE_SHA']}\nSHA-256: {actual}\n"
+          )
+          (root / "sunmi-release-notes.txt").write_text(notes)
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"SUNMI_RELEASE_TAG=sunmi-printer-v{version}\n")
+              env.write(f"SUNMI_RELEASE_NAME=Sunmi printer {version} ({code})\n")
+              env.write(f"SUNMI_RELEASE_APK={out / name}\n")
+          PY
+      - name: Publish the verified printer APK only
+        run: |
+          set -euo pipefail
+          if ! gh release view "$SUNMI_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$SUNMI_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$SUNMI_SOURCE_SHA" --title "$SUNMI_RELEASE_NAME" \
+              --notes-file "$RUNNER_TEMP/sunmi-release-notes.txt" --draft
+          fi
+          gh release view "$SUNMI_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish \
+            --jq 'select(.isDraft and .targetCommitish == env.SUNMI_SOURCE_SHA) | true' | grep -qx true
+          gh release upload "$SUNMI_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            "$SUNMI_RELEASE_APK" "$RUNNER_TEMP/sunmi-release/SHA256SUMS.txt"
+          gh release edit "$SUNMI_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
