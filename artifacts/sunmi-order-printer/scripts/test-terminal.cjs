@@ -17,6 +17,7 @@ function load(relative, dependencies, globals = {}) {
     exports: module.exports, module,
     require(name) {
       if (name in dependencies) return dependencies[name];
+      if (name === './print-timeout') return load('lib/print-timeout.ts', {}, globals);
       throw new Error(`Unexpected dependency ${name}`);
     },
     console, setTimeout, clearTimeout, URL, AbortController, ...globals,
@@ -104,7 +105,7 @@ async function run() {
   const saved = [];
   const stateValues = [
     { ...settings, autoPrint: true, keepAwake: true, soundEnabled: true },
-    { events: [], actions: [] }, true, 0, null,
+    { events: [], actions: [] }, true, 0, null, false,
   ];
   let stateIndex = 0;
   let refIndex = 0;
@@ -279,6 +280,7 @@ async function run() {
   });
   assert.equal(registeredFallback().component, 'safe-native-error-screen');
   assert.match(registeredFallback().props.error.message, /Simulated startup import failure/);
+  await require('./test-print-recovery.cjs')();
   console.log('PASS: terminal contracts, receipts, mandatory alarm, lazy missing-printer recovery, and startup-import error screen.');
 }
 const watchdog = setTimeout(() => {

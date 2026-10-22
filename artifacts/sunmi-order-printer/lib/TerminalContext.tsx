@@ -4,7 +4,8 @@ import { requireOptionalNativeModule } from 'expo';
 import { focusManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
 import { useAuth } from './AuthContext';
-import { getLastPrinterError, printOrder } from './printer';
+import { getActivePrintStage, getLastPrinterError, printOrder } from './printer';
+import { waitForPrintStep } from './print-timeout';
 import {
   addPrintedOrderId, getPrintedOrderIds, getSettings, saveSettings,
   getTerminalHistory, saveTerminalHistory, type TerminalHistory,
@@ -21,6 +22,7 @@ interface TerminalValue {
   connected: boolean;
   lastSync: string | null;
   settings: Settings;
+  autoPrintPaused: boolean;
   updateSettings: (changes: Partial<Settings>) => Promise<void>;
   events: TerminalEvent[];
   actions: OrderAction[];
@@ -54,6 +56,9 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
   const historyRef = useRef(emptyHistory);
   const saveTail = useRef<Promise<void>>(Promise.resolve());
   const printedLock = useRef(false);
+  const printStage = useRef('');
+  const [autoPrintPaused, setAutoPrintPaused] = useState(false);
+  const autoPrintPausedRef = useRef(false);
   const failedPrints = useRef(new Set<string>());
   const alive = useRef(true);
 
@@ -187,13 +192,18 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
   }, [settings?.keepAwake, addEvents]);
 
   const print = useCallback(async (order: Order, reason?: string) => {
-    if (printedLock.current) throw new Error('انتظر انتهاء الطباعة الحالية');
+    if (printedLock.current) {
+      throw new Error(`توجد محاولة طباعة جارية؛ المرحلة الحالية: ${getActivePrintStage() ?? printStage.current}.`);
+    }
     printedLock.current = true;
+    printStage.current = 'جلب اسم المندوب';
     try {
       let enriched = order;
       if (order.orderType === 'delivery') {
         try {
-          const assignment = await api.getAssignment(order.id);
+          const assignment = await waitForPrintStep(
+            () => api.getAssignment(order.id), 3000, 'تعذر جلب اسم المندوب في الوقت المحدد',
+          );
           enriched = { ...order, driverName: assignment?.driver?.name ?? undefined };
         } catch {
           // Printing must still be possible offline using the order already loaded.
@@ -201,16 +211,29 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
         }
       }
       if (!alive.current) return;
+      printStage.current = 'إرسال الفاتورة إلى Sunmi';
       if (!await printOrder(enriched, reason)) throw new Error(getLastPrinterError() ?? 'تعذرت الطباعة. تحقق من الورق والطابعة');
-      await addPrintedOrderId(String(order.id));
+      printStage.current = 'حفظ سجل الطباعة';
+      await waitForPrintStep(
+        () => addPrintedOrderId(String(order.id)), 5000,
+        'أُرسلت الفاتورة للطابعة لكن تعذر حفظ سجلها في الوقت المحدد. تحقق من الورق ولا تكرر الطباعة تلقائيًا.',
+      );
       failedPrints.current.delete(order.id);
+      autoPrintPausedRef.current = false;
+      if (alive.current) setAutoPrintPaused(false);
+    } catch (error) {
+      failedPrints.current.add(order.id);
+      autoPrintPausedRef.current = true;
+      if (alive.current) setAutoPrintPaused(true);
+      throw error;
     } finally {
+      printStage.current = '';
       printedLock.current = false;
     }
   }, []);
 
   useEffect(() => {
-    if (!settings?.autoPrint || !historyReady || !ordersQuery.data) return;
+    if (!settings?.autoPrint || !historyReady || !ordersQuery.data || autoPrintPausedRef.current) return;
     let cancelled = false;
     async function drain() {
       const printed = new Set(await getPrintedOrderIds());
@@ -218,23 +241,26 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
         .filter(order => order.status === 'preparing' && !printed.has(String(order.id)) && !failedPrints.current.has(order.id))
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
       for (const order of pending) {
-        if (cancelled || !alive.current || printedLock.current) return;
+        if (cancelled || !alive.current || printedLock.current || autoPrintPausedRef.current) return;
         try {
           await print(order);
         } catch (error) {
           failedPrints.current.add(order.id);
+          autoPrintPausedRef.current = true;
+          if (alive.current) setAutoPrintPaused(true);
           const detail = error instanceof Error ? error.message : 'فشلت الطباعة';
           await addEvents([{
             id: `print-error-${order.id}-${Date.now()}`, type: 'system',
-            title: `تعذرت طباعة الطلب #${order.dailyNumber}`, body: `${detail}. استخدم الطباعة اليدوية بعد الفحص لتجنب تكرار الفاتورة.`,
+            title: `تعذرت طباعة الطلب #${order.dailyNumber}`, body: `${detail}. أوقفت الطباعة التلقائية حتى لا تشغل الطابعة بمحاولات متتالية. افحص الورق والطابعة ثم استخدم الطباعة اليدوية؛ نجاحها يستأنف التلقائية دون إعادة الطلبات التي فشلت.`,
             orderId: order.id, createdAt: new Date().toISOString(), read: false,
           }]);
+          return;
         }
       }
     }
     void drain().catch(error => setLocalError(error.message));
     return () => { cancelled = true; };
-  }, [ordersQuery.data, settings?.autoPrint, historyReady, print, addEvents]);
+  }, [ordersQuery.data, settings?.autoPrint, historyReady, print, addEvents, autoPrintPaused]);
 
   const updateSettings = (changes: Partial<Settings>): Promise<void> => {
     const task = settingsSaveTail.current.catch(() => {}).then(async () => {
@@ -298,7 +324,7 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
     refreshOrders: async () => { await ordersQuery.refetch({ throwOnError: true }); },
     connected: ordersQuery.isSuccess && !ordersQuery.isError,
     lastSync: ordersQuery.dataUpdatedAt ? new Date(ordersQuery.dataUpdatedAt).toISOString() : null,
-    settings, updateSettings, events: history.events, actions: history.actions,
+    settings, updateSettings, autoPrintPaused, events: history.events, actions: history.actions,
     markRead, markAllRead, accept, reject, setStatus, print, recordDriverAssignment, needsAcceptance,
   }}>{children}</TerminalContext.Provider>;
 }

@@ -35,6 +35,9 @@ export default function DiagnosticsScreen() {
         <Card style={{ borderColor: result ? (result.ok ? c.success : c.destructive) : c.border }}>
           <Txt style={{ fontFamily: 'Inter_700Bold', fontSize: 18 }}>الطابعة</Txt>
           <Txt muted>النوع: Sunmi V3 المدمجة - الورق {t.settings.paperWidth} مم - {t.settings.copies} نسخة</Txt>
+          {t.autoPrintPaused ? (
+            <Notice tone="warn" text="الطباعة التلقائية متوقفة بعد فشل محاولة سابقة، لمنع تكرار الفواتير وإشغال الطابعة. افحص الورق والغطاء ثم اطبع الفاتورة يدويًا؛ نجاح الطباعة اليدوية يستأنف التلقائية." />
+          ) : null}
           <Txt>{result ? result.msg : 'لم يتم إجراء اختبار في هذه الجلسة. حالة الطابعة منفصلة عن الخادم.'}</Txt>
           {result ? <Txt muted style={{ fontSize: 13 }}>آخر اختبار: {timeOf(result.at)}</Txt> : null}
           <Btn icon="print" label="طباعة تجريبية" loading={printing} onPress={() => void test()} />

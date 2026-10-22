@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import type { Order } from './types';
 import { getSettings } from './storage';
 import { buildReceipt } from './receipt';
+import { waitForPrintStep } from './print-timeout';
 
 type SunmiPrinterModule = typeof import('@mitsuharu/react-native-sunmi-printer-library');
 
@@ -25,28 +26,46 @@ function getSunmiPrinter(): SunmiPrinterModule {
 }
 
 let busy = false;
+const MAX_PRINT_JOB_MS = 180000;
+let activePrint: { stage: string; deadline: number } | null = null;
 let lastError: string | null = null;
 export const getLastPrinterError = () => lastError;
+export const getActivePrintStage = () => activePrint?.stage ?? null;
+
+function beginPrint(stage: string): boolean {
+  if (busy) {
+    lastError = `توجد طباعة جارية؛ المرحلة الحالية: ${getActivePrintStage() ?? 'إرسال الفاتورة'}. لا تكرر المحاولة قبل انتهائها.`;
+    return false;
+  }
+  busy = true;
+  lastError = null;
+  activePrint = { stage, deadline: Date.now() + MAX_PRINT_JOB_MS };
+  return true;
+}
 
 // A native Promise may never settle if the printer service disconnects or
 // omits a callback. Bound each step, not just the outer job: a timed-out job
 // must never resume submitting the rest of its receipt later.
 async function printerStep<T>(stage: string, action: () => Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operation = activePrint;
+  if (!operation) throw new Error('لا توجد محاولة طباعة نشطة');
+  const remaining = operation.deadline - Date.now();
+  if (remaining <= 0) throw new Error('انتهت المهلة الكلية للطباعة. قد تخرج نسخة متأخرة؛ تحقق من الورق قبل إعادة الطباعة.');
+  operation.stage = stage;
   try {
-    return await Promise.race([
-      Promise.resolve().then(action),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(
-          `انتهت مهلة الطابعة أثناء: ${stage}. قد تخرج نسخة متأخرة؛ تحقق من الورق قبل إعادة الطباعة.`,
-        )), 15000);
-      }),
-    ]);
+    return await waitForPrintStep(
+      () => {
+        if (activePrint !== operation || Date.now() >= operation.deadline) {
+          throw new Error('انتهت محاولة الطباعة؛ لن تُرسل أوامر إضافية');
+        }
+        return action();
+      },
+      Math.min(15000, remaining),
+      `انتهت مهلة الطابعة أثناء: ${stage}. قد تخرج نسخة متأخرة؛ تحقق من الورق قبل إعادة الطباعة.`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${stage}: ${message}`);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -69,12 +88,7 @@ async function printLine(
 }
 
 export const printOrder = async (order: Order, reprintReason?: string): Promise<boolean> => {
-  if (busy) {
-    lastError = 'الطابعة مشغولة. انتظر انتهاء الفاتورة الحالية';
-    return false;
-  }
-  busy = true;
-  lastError = null;
+  if (!beginPrint('قراءة إعدادات الطباعة')) return false;
   let SunmiPrinter: SunmiPrinterModule | null = null;
   try {
     const settings = await printerStep('قراءة إعدادات الطباعة', getSettings);
@@ -103,17 +117,13 @@ export const printOrder = async (order: Order, reprintReason?: string): Promise<
     console.error('[SunmiPrinter] Error printing:', e);
     return false;
   } finally {
+    activePrint = null;
     busy = false;
   }
 };
 
 export const printTest = async (): Promise<boolean> => {
-  if (busy) {
-    lastError = 'الطابعة مشغولة. انتظر انتهاء الفاتورة الحالية';
-    return false;
-  }
-  busy = true;
-  lastError = null;
+  if (!beginPrint('الاتصال بطابعة Sunmi للاختبار')) return false;
   try {
     const SunmiPrinter = await preparePrinter();
     await printLine(SunmiPrinter, 'اختبار الطباعة', 30, 'center');
@@ -125,6 +135,7 @@ export const printTest = async (): Promise<boolean> => {
     console.error('[SunmiPrinter] Error testing print:', e);
     return false;
   } finally {
+    activePrint = null;
     busy = false;
   }
 };

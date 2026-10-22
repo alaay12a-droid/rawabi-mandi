@@ -45,6 +45,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   let response: Response;
+  let text: string;
 
   try {
     response = await fetch(`${getApiBase()}${path}`, {
@@ -57,6 +58,9 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
         ...options?.headers,
       },
     });
+    // Fetch resolves at headers. Keep the timeout active until the body arrives:
+    // a stalled assignment body must not hold the terminal's print lock.
+    text = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('انتهت مهلة الاتصال بالخادم. تحقق من اتصال الإنترنت ثم أعد المحاولة');
@@ -67,8 +71,6 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
-  const text = await response.text();
-
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/api/dashboard/auth/')) unauthorizedHandler?.();
     let errorMsg = `HTTP Error ${response.status}`;
