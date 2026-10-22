@@ -30,7 +30,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { apiGet, apiPost, apiPatch } from "@/constants/api";
 import { TOKEN_KEY } from "@/hooks/useCustomerPushToken";
-import { useChatUnreadAlert } from "@/hooks/useChatSound";
 
 const F = {
   regular: "Cairo_400Regular",
@@ -74,7 +73,7 @@ export default function MoreScreen() {
   const chatScrollRef                    = useRef<ScrollView>(null);
   const isEn = language === "en";
 
-  useChatUnreadAlert(unreadTotal);
+  // Customer alerts use the OS push notification sound, not unread-count audio.
 
   const fetchChatMsgs = useCallback(async (orderId: number) => {
     try {

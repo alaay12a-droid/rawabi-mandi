@@ -26,7 +26,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPatch, apiPost } from "@/constants/api";
-import { useChatUnreadAlert } from "@/hooks/useChatSound";
 import { useOrderBadge } from "@/context/OrderBadgeContext";
 import { useLanguage } from "@/context/LanguageContext";
 
@@ -363,7 +362,7 @@ export default function OrdersScreen() {
   }, [checkUnread]);
 
   const totalUnreadFromCashier = Object.values(unreadByOrder).reduce((s, n) => s + n, 0);
-  useChatUnreadAlert(totalUnreadFromCashier);
+  // Customer alerts use the OS push notification sound, not unread-count audio.
 
   // ── check if any recent order has a driver picked_up ─────────────────────
   const checkActiveDriver = useCallback(async () => {
